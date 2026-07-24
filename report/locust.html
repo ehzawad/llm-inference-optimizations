@@ -61,5 +61,5 @@
     <div class="callout warn"><span class="lab">The teaching case</span>The scary metric (4.3∶1 prefill∶decode ratio) turns out <b>cheap in seconds</b>: prefill runs ~3,100 tok/s overall (up to ~4,200 at the longest turns) while decode runs ~13 tok/s effective, so re-prefill costs only ~40 → ~300 ms of TTFT and <b>barely moves the ~10 s decode-dominated e2e</b>. Always ask: <em>expensive in what units, and is that the bottleneck?</em> (In a real chatbot you'd turn prefix caching <b>on</b> — see <a href="engines.html">Engines &amp; chatbot</a> — and even this small tax largely vanishes.)</div>
   </section>
 
-  <div class="col foot">Raw data: <code>results/locust/loc-20260721T005851Z/</code> (token-window JSON + per-turn summary). Locust auto-HTML reports are git-ignored.<br><a href="https://github.com/ehzawad/qwen3-lora-gguf-bench">github.com/ehzawad/qwen3-lora-gguf-bench</a></div>
+  <div class="col foot">Raw data: <code>results/locust/loc-20260721T005851Z/</code> (token-window JSON + per-turn summary). Locust auto-HTML reports are git-ignored.<br><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></div>
 </main>

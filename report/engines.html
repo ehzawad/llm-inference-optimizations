@@ -81,5 +81,5 @@
     <div class="callout"><span class="lab">Bottom line</span>For a <b>single user or edge/CPU deploy</b>, llama.cpp is the pragmatic pick (simplest, competitive at C=1). For <b>many concurrent users</b>, vLLM and SGLang are ~4× faster here and hold better tail latency — pick vLLM for the lightest-latency p50, SGLang if its RadixAttention prefix reuse fits your multi-turn workload (we disabled it, so its real edge is understated). These are bf16 numbers on one model — not a universal ranking.</div>
   </section>
 
-  <div class="col foot">Raw data: <code>results/enginefair-20260721T062947Z/</code> (benchmark-*.json + SUMMARY.json; the original VOID run is noted in <code>results/engines/eng-20260721T002012Z/</code>). Literature cited inline.<br><a href="https://github.com/ehzawad/qwen3-lora-gguf-bench">github.com/ehzawad/qwen3-lora-gguf-bench</a></div>
+  <div class="col foot">Raw data: <code>results/enginefair-20260721T062947Z/</code> (benchmark-*.json + SUMMARY.json; the original VOID run is noted in <code>results/engines/eng-20260721T002012Z/</code>). Literature cited inline.<br><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></div>
 </main>

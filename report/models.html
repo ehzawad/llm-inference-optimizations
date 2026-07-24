@@ -103,7 +103,7 @@
     <div class="callout bad"><span class="lab">Caveats</span>The <b>bpw differences</b> (Gemma 5.9 vs ~5.0) make this a matched-<em>tier</em>, not equal-precision, comparison. <b>TTFT was captured only for the 4B</b> (a streaming-format quirk left Qwen3.5/Gemma TTFT unrecorded — throughput/VRAM unaffected). All runs are <b>llama.cpp only</b>: vLLM 0.11.0 predates <code>qwen35</code>/<code>gemma4</code>, so a multi-engine take on the new models is a separate follow-up. Text-only, one GPU, one quant tier.</div>
   </section>
 
-  <div class="col foot">Raw data: <code>results/modelscale-20260721T053813Z/</code> (single_stream.json, benchmark-*.json, provenance.json with SHA-256 + bpw audit). Full write-up: §10 of the <a href="index.html">field guide</a>.<br><a href="https://github.com/ehzawad/qwen3-lora-gguf-bench">github.com/ehzawad/qwen3-lora-gguf-bench</a></div>
+  <div class="col foot">Raw data: <code>results/modelscale-20260721T053813Z/</code> (single_stream.json, benchmark-*.json, provenance.json with SHA-256 + bpw audit). Full write-up: §10 of the <a href="index.html">field guide</a>.<br><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></div>
 </main>
 
 <script>
