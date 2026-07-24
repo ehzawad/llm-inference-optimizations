@@ -1,0 +1,19 @@
+# Multi-GPU benchmark HARNESS environment (Python 3.14).
+#
+# Used by the HTTP benchmark CLIENT and the reporting/analysis code:
+#   scripts/bench_external.py, scripts/report.py, scripts/matrix_report.py.
+# The engine SERVERS run in their own venvs (versions below); llama.cpp is a
+# compiled CUDA binary. Create the harness venv with:
+#
+#   uv venv --python 3.14 .venv-harness
+#   uv pip install --python .venv-harness -r requirements/harness.txt
+#
+# Engine environments used for REPORT-MULTIGPU.md (provisioned separately, not
+# pinned here because their dependency trees are large and CUDA-specific):
+#   .venv-vllm-stable : vLLM 0.11.0  (torch 2.8.0+cu128)  -- gpu_matrix.sh, engine_fair.sh
+#   .venv-vllm        : vLLM 0.25.1  (torch 2.11.0+cu130) -- engine_compare.sh
+#   .venv-sglang      : SGLang 0.5.15.post1               -- engine_fair.sh (sglang)
+# Override the interpreter paths with env vars VLLM_BIN / SGLANG_PY when they
+# live elsewhere. The single-A5000 pipeline (run.sh) needs only merge-bench.txt.
+requests>=2.31
+numpy>=1.26

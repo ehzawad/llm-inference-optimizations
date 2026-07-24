@@ -2,7 +2,7 @@
 
 A hardware-specific case study of LLM inference across **one RTX A5000 (24 GB)**, **one RTX A6000 (48 GB)**, and **both together** — as tensor-parallel (TP) and as data-parallel replicas (DP) — on a single heterogeneous, **no-NVLink**, cross-NUMA machine. Companion to [`REPORT.md`](REPORT.md) (the single-A5000 field guide); this document adds the *placement/parallelism* axis and does not restate the single-card concurrency mechanics covered there (see REPORT.md §3–§5).
 
-Model: Qwen3-4B-Instruct-2507 + legal-ops LoRA, merged. vLLM serves **bf16** (`models/merged`); llama.cpp serves **Q6_K** GGUF. Engine servers run their own venvs; the HTTP client, reporting and analysis run on **Python 3.14** (`.venv-harness`). All numbers below come from the committed run `results/matrix-20260724T091857Z/` (14/14 config×shape runs PASS, fail-closed `--expect` satisfied, server↔client token cross-check verified on every point).
+Model: Qwen3-4B-Instruct-2507 + legal-ops LoRA, merged. vLLM serves **bf16** (`models/merged`); llama.cpp serves **Q6_K** GGUF. Engine servers run their own venvs; the HTTP client, reporting and analysis run on **Python 3.14** (`.venv-harness`). All numbers below are the derived record of run `results/matrix-20260724T091857Z/` (14/14 config×shape runs PASS, fail-closed `--expect` satisfied, server↔client token cross-check verified on every point). The raw matrix bundle is **not** committed to the repository; these tables are the retained record, and the harness + `config/matrix.json` reproduce the run.
 
 > **Read the caveats (M10) before quoting any number.** This measures *this* chassis, cooling, and heterogeneous pair — not "TP" or "DP" in general.
 
@@ -44,8 +44,8 @@ Three fixed workload shapes (server booted at `NP = max(C)`, client sweeps concu
 
 On this box, **for a 4B model that already fits on either card**:
 
-- **Data-parallel (two replicas) is the reliable way to turn two GPUs into more throughput.** DP beats the best single card in every shape and the margin **grows with concurrency** (balanced 0.99×→**1.23×** at C=64; decode 1.00×→**1.14×**; prefill 0.95×→**1.38×** at C=16), landing at **97–99 % of the load-matched two-replica ceiling**. It costs latency almost nothing and roughly **doubles power**.
-- **Tensor-parallel is a low-concurrency / single-stream tool, not a throughput-under-load tool.** TP wins big at C=1 (~**1.5×** best-single, every shape) because splitting weights ~doubles weight-read bandwidth, but the advantage **erodes as concurrency rises and flips to a loss** at high C in prefill (C≥4: 0.82–0.96×) and decode (C=64: 0.97×); on balanced it fades to near-parity (1.04× at C=64). **TP always has worse TTFT** than the best single card. The popular "TP is useless without NVLink" claim is **too coarse here** — it is false at low concurrency and true-ish only under load.
+- **Data-parallel (two replicas) is the reliable way to turn two GPUs into more throughput — once there is enough concurrent work to engage both replicas.** C=1 is *not* a 2-GPU datapoint: the join-shortest-queue tie-break sends the single stream to the A5000 and leaves the A6000 idle. Above C=1, DP beats the best single card and the margin **grows with concurrency** (balanced 1.03×@C8→**1.23×**@C64; decode 1.05×→**1.14×**; prefill 1.16×@C4→**1.38×**@C16), landing at **97–99 % of the load-matched two-replica ceiling**. It roughly **doubles power**, but it also *improves* TTFT under load — splitting the offered concurrency across two replicas halves each card's queue, so DP's loaded TTFT is **lower** than the best single card (balanced C=64: 0.320 s p50 vs the A6000's 0.376 s; M3). DP wins throughput **and** latency once concurrency is high.
+- **Tensor-parallel is a low-concurrency / single-stream tool, not a throughput-under-load tool.** TP wins at C=1 (**1.55×** best-single balanced, **1.57×** decode, but only **1.14×** prefill) because splitting weights ~doubles weight-read bandwidth, but the advantage **erodes as concurrency rises and flips to a loss** at high C in prefill (C≥4: 0.82–0.96×) and decode (C=64: 0.97×); on balanced it fades to near-parity (1.04× at C=64). **TP always has worse TTFT** than the best single card. The popular "TP is useless without NVLink" claim is **too coarse here** — it is false at low concurrency and true-ish only under load.
 - **The A6000 is not simply "the faster card."** It wins compute-bound prefill (1.07×→1.28×) and high-concurrency batched decode, but at low-to-mid concurrency in the decode-heavy shape it is **slower than the A5000** because it **thermally throttles** in this chassis.
 - **For efficiency (tokens/sec per watt), a single A5000 wins.** Two-GPU configurations trade roughly half the per-watt efficiency for absolute throughput.
 
@@ -106,9 +106,9 @@ Read this as a **crossover**: TP dominates at low concurrency (1.55× at C=1) bu
 | C | a5000 TTFT | a6000 TTFT | tp2 TTFT | dp2 TTFT | a6000 decode | tp2 decode | dp2 decode |
 |---|---|---|---|---|---|---|---|
 | 1 | 0.072 | 0.066 | 0.072 | 0.073 | 69.6 | **108.8** | 69.1 |
-| 64 | 0.448 | **0.376** | 0.648 | 0.728 | 37.3 | 40.1 | 48.4 |
+| 64 | 0.448 | 0.376 | 0.648 | **0.320** | 37.3 | 40.1 | 48.4 |
 
-TP's single-stream **decode** proxy (108.8) is ~1.56× best-single — two memory buses reading half the weights each. But TP's **TTFT is the worst of any placement at high C** (0.648 s vs the A6000's 0.376 s): the per-layer all-reduce and heterogeneous sync tax time-to-first-token even when it helps steady-state decode. **"TP wins" and "TP loses" are both wrong** — TP trades TTFT for decode, and the trade only pays at low concurrency.
+TP's single-stream **decode** proxy (108.8) is ~1.56× best-single — two memory buses reading half the weights each. But TP's **TTFT is the worst of any placement at high C** (0.648 s vs the A6000's 0.376 s): the per-layer all-reduce and heterogeneous sync tax time-to-first-token even when it helps steady-state decode. **DP, by contrast, has the *lowest* loaded TTFT** (0.320 s at C=64) — its two replicas each see half the offered load, so per-card queueing drops below a single card's. **"TP wins" and "TP loses" are both wrong** — TP trades TTFT for decode, and the trade only pays at low concurrency; DP is the placement that improves both throughput and TTFT under load.
 
 ---
 
@@ -200,12 +200,12 @@ llama.cpp wins single-stream (Q6_K moves fewer bytes); vLLM wins ~2.5× under co
 | Goal | Best choice | Evidence |
 |---|---|---|
 | Max aggregate throughput under load | **DP (two replicas)** | M3/M5: 1.14–1.23× best-single at C=64, scales with C |
-| Lowest single-stream / low-concurrency latency | **TP** | M3–M5: ~1.5× at C=1, all shapes |
-| Best time-to-first-token under load | **single A6000** | M3: TP/DP both worsen TTFT at high C |
+| Highest single-stream / low-concurrency throughput | **TP** | M3–M5: 1.55× balanced / 1.57× decode / 1.14× prefill at C=1 (throughput, not TTFT) |
+| Best time-to-first-token under load | **DP** (single A6000 close behind) | M3: DP 0.320 vs A6000 0.376 at balanced C=64 — load-split halves per-card queue; TP is worst (0.648) |
 | Best tokens/sec per watt | **single A5000** | M7: 8.7–11.0 tok/s/W |
 | Simplicity / one model, one card | **single A6000** (prefill-heavy) or **A5000** (decode/efficiency) | M2 |
 
-**Is TP ever the right call on this box?** Yes — but narrowly: a **latency-sensitive, low-concurrency** service for a model that fits on one card, where its ~1.5× single-stream decode outweighs its worse TTFT. For anything throughput-oriented or beyond ~C=32, **DP wins**. A model that *doesn't* fit on one card would *force* TP (or a bigger card) — a regime this study did not test.
+**Is TP ever the right call on this box?** Yes — but narrowly: a **low-concurrency** service that wants maximum single-stream *throughput* for a model that fits on one card, where its ~1.5× single-stream decode (balanced/decode shapes) outweighs its *worse* TTFT. If TTFT is what you care about, a single A6000 wins. For anything throughput-oriented beyond ~C=32, **DP wins**. A model that *doesn't* fit on one card would *force* TP (or a bigger card) — a regime this study did not test.
 
 ---
 
@@ -228,5 +228,5 @@ llama.cpp wins single-stream (Q6_K moves fewer bytes); vLLM wins ~2.5× under co
 
 - Driver: `scripts/gpu_matrix.sh <config> <run_dir> <shape>` (pins GPUs, boots server, sweeps C, fail-closed report); aggregate with `scripts/matrix_report.py <run_dir> --expect config/matrix.json`. Preview any cell's exact server+client command with `DRY_RUN=1`.
 - Run: `results/matrix-20260724T091857Z/` — 14/14 PASS, `matrix_ok`, `--expect` satisfied, server↔client token cross-check non-null on every point.
-- Provenance: each run's `manifest.json` records commit + `source_dirty` (false) and now enumerates **both** GPUs. Raw server logs stay local; the derived `benchmark-*.json`, `summary.*`, `matrix-summary.*`, per-GPU telemetry summaries and manifests are committed as the evidence bundle.
-- Committed on branch `pr2-fixes-and-multigpu`; base = the PR-#2 fail-closed hardening.
+- Provenance: each run's `manifest.json` records commit + `source_dirty` (false) and enumerates **both** GPUs. The raw matrix bundle (server logs, telemetry CSV, per-point JSON) is **not distributed in the repo** — this report is the retained derived record; the harness (`scripts/gpu_matrix.sh` + `scripts/matrix_report.py`) and `config/matrix.json` reproduce the run. Manifest digest of the 232-file bundle at capture time: `a6d3c9a9aca43bf258dc561d642e88ca9edab63011bad8785fc209f25943ce27`.
+- Landed on `main`; built on the PR-#2 fail-closed hardening.

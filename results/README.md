@@ -18,8 +18,10 @@ Multi-GPU comparative runs live in `matrix-<UTC-timestamp>/` (see
 subdirectory per placement × shape (e.g. `vllm-dp2-decode/`, `llamacpp-a5000-balanced/`),
 each with the same per-concurrency files plus `telemetry-c0NN-gpu{0,1}.csv` (one
 per physical GPU) and `config.json`. `matrix-summary.{md,json}` aggregates the
-whole matrix. Raw `server*.log` are kept local; the derived JSON + telemetry are
-the committed evidence bundle.
+whole matrix. Multi-GPU matrix runs are kept **local (git-ignored)**; the numbers
+are the retained record in [`../REPORT-MULTIGPU.md`](../REPORT-MULTIGPU.md),
+reproducible via the harness (`scripts/gpu_matrix.sh` + `scripts/matrix_report.py`)
+and `config/matrix.json`.
 
 Throughput is `60 × Σ(completion_tokens) / makespan` on a single wall clock;
 see the repo README for full metric definitions and the mandatory

@@ -14,7 +14,10 @@ Each prompt carries a unique nonce so prompt caching cannot silently dedupe
 them. Domain matches the adapter (legal contract-intake ops) and is benign.
 
 Usage: make_shapes.py [--outdir prompts] [--count 512]
-                      [--long-sentences 120] [--short-words 12]
+                      [--long-sentences 80] [--short-words 12]
+
+The defaults regenerate the exact committed corpora byte-for-byte, so the
+prefill/decode workloads are reproducible without the files being committed.
 """
 from __future__ import annotations
 
@@ -82,8 +85,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--outdir", default="prompts")
     ap.add_argument("--count", type=int, default=512)
-    ap.add_argument("--long-sentences", type=int, default=120,
-                    help="sentences per prefill-heavy prompt (~15 tok each)")
+    ap.add_argument("--long-sentences", type=int, default=80,
+                    help="sentences per prefill-heavy prompt (~15 tok each); "
+                         "80 reproduces the committed ~1240-token workload")
     ap.add_argument("--short-words", type=int, default=12)
     args = ap.parse_args()
 

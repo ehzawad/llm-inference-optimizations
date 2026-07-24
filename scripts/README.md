@@ -2,8 +2,7 @@
 
 Flat by design (each script resolves the repo root as its parent dir; a subdir
 split was deliberately avoided to keep reproduction paths stable). Grouped here
-by purpose. Everything is driven by [`../run.sh`](../run.sh); the two multi-agent
-workflow definitions live in [`../workflows/`](../workflows).
+by purpose. Everything is driven by [`../run.sh`](../run.sh).
 
 ### Pipeline (base + LoRA → GGUF Q6_K)
 | Script | Role |

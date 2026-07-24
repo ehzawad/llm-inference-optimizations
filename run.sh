@@ -14,6 +14,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID   # device 0 == physical GPU 0 (A5000)
 export CUDA_VISIBLE_DEVICES=0
 
 corpus()   { python3 scripts/make_corpus.py "$PROMPTS" 2400; }
+shapes()   { python3 scripts/make_shapes.py --outdir "$ROOT/prompts"; }  # prefill/decode corpora (multi-GPU study)
 download() { python3 scripts/01_download.py; }
 build()    { bash scripts/03_build_llamacpp.sh; }
 merge()    { HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
@@ -102,8 +103,8 @@ reproduce() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  preflight|corpus|download|merge|build|convert|quantize|verify|benchmark|report|\
+  preflight|corpus|shapes|download|merge|build|convert|quantize|verify|benchmark|report|\
   serve|chat-serve|context|accuracy|data|reproduce)
     "$cmd" "$@";;
-  *) echo "usage: ./run.sh {preflight|corpus|download|merge|build|convert|quantize|verify|benchmark|report|serve|chat-serve <ctx> <slots> <kv>|context|accuracy|data|reproduce}";;
+  *) echo "usage: ./run.sh {preflight|corpus|shapes|download|merge|build|convert|quantize|verify|benchmark|report|serve|chat-serve <ctx> <slots> <kv>|context|accuracy|data|reproduce}";;
 esac

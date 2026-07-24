@@ -20,7 +20,7 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0
 BF16_GGUF="$ROOT/models/gguf/qwen3-4b-legal-ops-bf16.gguf"
 MERGED="$ROOT/models/merged"
 BIN="$ROOT/vendor/llama.cpp/build/bin"
-VLLM="$ROOT/.venv-vllm-stable/bin/vllm"
+VLLM="${VLLM_BIN:-$ROOT/.venv-vllm-stable/bin/vllm}"
 PORT=8300
 ALIAS="qwen3-4b-legal-q6k"      # client sends this model name; serve under it
 CLIENTS="${CLIENTS:-1 8 16 30 60 100}"
@@ -148,7 +148,7 @@ run_vllm(){
 run_sglang(){
   echo "### SGLang bf16 (RadixAttention, prefix-cache off) $(date -u +%H:%M:%S) ###"
   free_port
-  local sg="$ROOT/.venv-sglang/bin/python"
+  local sg="${SGLANG_PY:-$ROOT/.venv-sglang/bin/python}"
   if [ ! -x "$sg" ]; then
     echo "### missing SGLang environment: $sg ###" >&2
     fail=1

@@ -687,7 +687,11 @@ class ShellOrchestratorTests(unittest.TestCase):
             root = Path(tmp)
             fake_bin, log = self.make_fake_tools(root)
             env = self.fake_env(fake_bin, log)
-            env.update({"CLIENTS": "1", "MEASURED": "1", "WARMUP": "0"})
+            # Point the SGLang interpreter at an existing fake executable so the
+            # wrapper's `[ -x ]` guard passes without a real .venv-sglang (which
+            # CI does not have); the fake setsid only logs the launch line.
+            env.update({"CLIENTS": "1", "MEASURED": "1", "WARMUP": "0",
+                        "SGLANG_PY": str(fake_bin / "python3")})
             completed = run(
                 "bash", "scripts/engine_fair.sh", str(root / "ef"), "sglang",
                 cwd=REPO, env=env,

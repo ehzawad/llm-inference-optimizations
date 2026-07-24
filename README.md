@@ -17,12 +17,8 @@ The full write-up — a mentor-style **field guide to LLM inference** covering a
 six studies (concurrency capacity, precision, engines, LoRA/SVD, and finite-user
 load), reconciled through three independent review passes — lives in:
 
-- **[`REPORT.md`](REPORT.md)** — the complete report (renders on GitHub).
-- **[`report/`](report/)** — a self-contained, theme-aware **HTML suite** with
-  interactive charts: [field guide](report/index.html) ·
-  [concurrency](report/concurrency.html) · [precision](report/precision.html) ·
-  [engines &amp; chatbot](report/engines.html) · [LoRA &amp; SVD](report/lora.html) ·
-  [Locust](report/locust.html). (Open locally or via GitHub Pages.)
+- **[`REPORT.md`](REPORT.md)** — single-A5000 field guide · **[`REPORT-MULTIGPU.md`](REPORT-MULTIGPU.md)** — the A5000/A6000/TP/DP study. (Both render on GitHub.)
+- **[`report/index.html`](report/index.html)** — one self-contained, theme-aware **HTML** rendering both reports with interactive charts. (Open locally or via GitHub Pages.)
 
 ## Scope and non-goals
 
@@ -217,11 +213,13 @@ power-capped GPU, not the 24 GB.
 
 ## Artifact map (what stays local)
 
-Committed: scripts, `run.sh`, `config/`, `prompts/`, `requirements/`, results
-JSON/CSV/Markdown, `README`/`LICENSE`/`NOTICE`. Fetched/generated at runtime and
-git-ignored: `models/` (base, adapter, merged, GGUFs), `vendor/llama.cpp`,
-`logs/`. Defense-in-depth `.gitignore` blocks `*.safetensors`, `*.gguf`, and
-compiled objects even if placed elsewhere.
+Committed: scripts, `run.sh`, `config/`, `requirements/`, the existing `results/`
+study JSON/CSV/Markdown, `report/index.html`, and the reports/`LICENSE`/`NOTICE`.
+Regenerated on demand and git-ignored: `models/` (base, adapter, merged, GGUFs),
+`vendor/llama.cpp`, `logs/`, **`prompts/*.jsonl`** (deterministic — `./run.sh
+corpus` + `./run.sh shapes` reproduce them byte-for-byte), and **new `results/`
+runs** (the existing study dirs stay committed). Defense-in-depth `.gitignore`
+blocks `*.safetensors`, `*.gguf`, and compiled objects even if placed elsewhere.
 
 ## Verification checks
 

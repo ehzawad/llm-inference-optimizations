@@ -1,11 +1,30 @@
-<title>LLM Inference on a Single RTX A5000 — A Field Guide</title>
+<!doctype html>
+<!--
+  LLM Inference on RTX A5000/A6000: From One GPU to Two.
+  This single HTML file is the combined reader-facing RENDER of two authoritative
+  Markdown sources, not a third independent source of numbers:
+    - REPORT.md            (single-A5000 field guide)
+    - REPORT-MULTIGPU.md   (heterogeneous A5000/A6000 TP/DP study)
+  The multi-GPU tables also appear in results/matrix-20260724T091857Z/matrix-summary.md.
+  Every figure traces to those documents. Self-contained: all CSS/JS/SVG inlined,
+  no external fonts/CDNs/chart libraries/images. Charts are pre-rendered inline SVG
+  (title + desc + adjacent data table) and render with JavaScript disabled.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="A numbers-first field guide to serving a fine-tuned Qwen3-4B on one RTX A5000, extended to a heterogeneous two-GPU (A5000 + A6000) tensor-parallel vs data-parallel study. Every figure is measured; every caveat is kept.">
+<title>LLM Inference on RTX A5000/A6000: From One GPU to Two</title>
 <style>
   :root {
     --ground: #f5f7fa; --panel: #ffffff; --panel-2: #eef1f6;
     --ink: #171b24; --muted: #5a6474; --faint: #8b95a6;
     --line: #dde3ec; --line-strong: #c4cdda;
-    --gpu: #17998a; --gpu-soft: #d3ece8;      /* teal = GPU / throughput */
-    --cpu: #c67e12; --cpu-soft: #f6e6c9;       /* amber = CPU / host */
+    --gpu: #17998a; --gpu-soft: #d3ece8;      /* teal = GPU / throughput / DP */
+    --cpu: #c67e12; --cpu-soft: #f6e6c9;       /* amber = host / thermal / A6000 */
+    --tp:  #6d5bd0; --tp-soft:  #e6e1f7;       /* violet = tensor-parallel */
     --good: #2f8f5b; --bad: #c8443a; --warn: #c67e12;
     --shadow: 0 1px 2px rgba(20,30,50,.06), 0 8px 30px rgba(20,30,50,.06);
     --measure: 68ch;
@@ -19,6 +38,7 @@
       --ink: #e6e9f0; --muted: #9aa4b6; --faint: #6b7688;
       --line: #232a37; --line-strong: #313a4b;
       --gpu: #2fc7b3; --gpu-soft: #123330; --cpu: #e8a83e; --cpu-soft: #33270f;
+      --tp: #9d8bf0; --tp-soft: #241d3d;
       --good: #4cc383; --bad: #e5675c; --warn: #e8a83e;
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 34px rgba(0,0,0,.35);
     }
@@ -28,445 +48,1408 @@
     --ink: #171b24; --muted: #5a6474; --faint: #8b95a6;
     --line: #dde3ec; --line-strong: #c4cdda;
     --gpu: #17998a; --gpu-soft: #d3ece8; --cpu: #c67e12; --cpu-soft: #f6e6c9;
+    --tp: #6d5bd0; --tp-soft: #e6e1f7;
     --good: #2f8f5b; --bad: #c8443a; --warn: #c67e12;
+    --shadow: 0 1px 2px rgba(20,30,50,.06), 0 8px 30px rgba(20,30,50,.06);
   }
   :root[data-theme="dark"] {
     --ground: #0b0e14; --panel: #12161f; --panel-2: #171c27;
     --ink: #e6e9f0; --muted: #9aa4b6; --faint: #6b7688;
     --line: #232a37; --line-strong: #313a4b;
     --gpu: #2fc7b3; --gpu-soft: #123330; --cpu: #e8a83e; --cpu-soft: #33270f;
+    --tp: #9d8bf0; --tp-soft: #241d3d;
     --good: #4cc383; --bad: #e5675c; --warn: #e8a83e;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 34px rgba(0,0,0,.35);
   }
 
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
   body { margin: 0; background: var(--ground); color: var(--ink);
     font-family: var(--serif); font-size: 18px; line-height: 1.62;
     -webkit-font-smoothing: antialiased; }
-  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
-  .col { max-width: var(--measure); }
   p, li { color: var(--ink); }
   a { color: var(--gpu); text-underline-offset: 3px; }
-  h1, h2, h3 { font-family: var(--sans); line-height: 1.15; text-wrap: balance;
-    letter-spacing: -.015em; }
+  h1, h2, h3, h4 { font-family: var(--sans); line-height: 1.16; text-wrap: balance; letter-spacing: -.015em; }
   code, .mono, td.n, th.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .eyebrow { font-family: var(--sans); text-transform: uppercase; letter-spacing: .14em;
     font-size: 12px; font-weight: 650; color: var(--faint); }
+  :focus-visible { outline: 3px solid var(--gpu); outline-offset: 2px; border-radius: 4px; }
+
+  /* ---- skip link ---- */
+  .skip { position: absolute; left: -9999px; top: 0; background: var(--gpu); color: #fff;
+    padding: 10px 16px; border-radius: 0 0 8px 0; z-index: 200; font-family: var(--sans); }
+  .skip:focus { left: 0; }
+
+  /* ---- top bar ---- */
+  .topbar { position: sticky; top: 0; z-index: 100; display: flex; align-items: center;
+    gap: 14px; padding: 8px 20px; background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(8px); border-bottom: 1px solid var(--line); }
+  .topbar .brand { font-family: var(--sans); font-weight: 700; font-size: 14px; color: var(--ink);
+    text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+  .topbar .spacer { flex: 1; }
+  .themectl { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px;
+    overflow: hidden; background: var(--panel); }
+  .themectl button { font-family: var(--sans); font-size: 12px; font-weight: 600; border: none;
+    background: transparent; color: var(--muted); padding: 5px 11px; cursor: pointer; }
+  .themectl button[aria-pressed="true"] { background: var(--gpu); color: #fff; }
+
+  /* mobile TOC */
+  .toc-m { display: none; font-family: var(--sans); }
+  .toc-m > summary { list-style: none; cursor: pointer; font-size: 13px; font-weight: 650;
+    color: var(--gpu); padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: 8px; }
+  .toc-m > summary::-webkit-details-marker { display: none; }
+  .toc-m[open] > summary { background: var(--panel-2); }
+  .toc-m .menu { position: absolute; left: 12px; right: 12px; margin-top: 8px; background: var(--panel);
+    border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--shadow);
+    padding: 12px 14px; max-height: 70vh; overflow: auto; }
+  .toc-m .menu a { display: block; padding: 6px 4px; color: var(--ink); text-decoration: none; font-size: 14px; }
+  .toc-m .menu .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--faint); font-weight: 700; margin: 12px 0 2px; }
+  .toc-m .menu .grp:first-child { margin-top: 0; }
 
   /* ---- hero ---- */
   header.hero { border-bottom: 1px solid var(--line); background:
     radial-gradient(120% 140% at 100% -20%, var(--gpu-soft) 0%, transparent 55%),
     radial-gradient(120% 140% at 0% -10%, var(--cpu-soft) 0%, transparent 50%); }
-  .hero-inner { padding: 66px 0 44px; }
-  h1 { font-size: clamp(30px, 5.2vw, 52px); font-weight: 780; margin: 14px 0 10px; }
-  .lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 60ch; margin: 0; }
-  .statstrip { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .hero-inner { padding: 54px 0 40px; }
+  h1 { font-size: clamp(28px, 4.8vw, 48px); font-weight: 780; margin: 12px 0 10px; }
+  .lede { font-size: clamp(18px, 2.1vw, 21px); color: var(--muted); max-width: 64ch; margin: 0; }
+  .scopestrip { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .scopestrip .chip { font-family: var(--sans); font-size: 11.5px; font-weight: 600;
+    color: var(--muted); background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 999px; padding: 4px 11px; }
+  .scopestrip .chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line-strong)); }
+  .statstrip { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
   .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 12px 16px; box-shadow: var(--shadow); min-width: 132px; }
-  .stat b { font-family: var(--mono); font-size: 23px; font-weight: 680; display: block;
+    padding: 12px 16px; box-shadow: var(--shadow); min-width: 150px; flex: 1 1 150px; }
+  .stat b { font-family: var(--mono); font-size: 22px; font-weight: 680; display: block;
     font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-  .stat span { font-family: var(--sans); font-size: 11.5px; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .08em; }
-  .stat.gpu b { color: var(--gpu); } .stat.cpu b { color: var(--cpu); }
+  .stat span { font-family: var(--sans); font-size: 11px; color: var(--muted);
+    display: block; margin-top: 2px; }
+  .stat .who { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; }
+  .stat.gpu b { color: var(--gpu); } .stat.cpu b { color: var(--cpu); } .stat.tp b { color: var(--tp); }
+
+  /* ---- layout ---- */
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 40px;
+    max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .toc { position: sticky; top: 60px; align-self: start; max-height: calc(100vh - 76px);
+    overflow: auto; padding: 22px 0 40px; font-family: var(--sans); }
+  .toc .grp { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--faint); font-weight: 700; margin: 18px 0 6px; }
+  .toc .grp:first-child { margin-top: 0; }
+  .toc a { display: block; padding: 4px 10px; margin-left: -10px; color: var(--muted);
+    text-decoration: none; font-size: 13.5px; border-left: 2px solid transparent; line-height: 1.35; }
+  .toc a:hover { color: var(--ink); }
+  .toc a[aria-current="true"] { color: var(--gpu); border-left-color: var(--gpu); font-weight: 650; }
+  main { min-width: 0; padding-bottom: 30px; }
+  .col { max-width: var(--measure); }
 
   /* ---- section rhythm ---- */
-  section { padding: 46px 0; border-bottom: 1px solid var(--line); }
-  .sec-head { display: flex; align-items: baseline; gap: 14px; margin: 0 0 18px; }
-  .sec-head .idx { font-family: var(--mono); color: var(--gpu); font-size: 15px;
-    font-weight: 600; padding-top: 4px; }
-  h2 { font-size: clamp(23px, 3.4vw, 31px); font-weight: 720; margin: 0; }
-  h3 { font-size: 18px; font-weight: 680; margin: 26px 0 8px; color: var(--ink);
-    font-family: var(--sans); }
+  section { padding: 40px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 64px; }
+  section:last-of-type { border-bottom: none; }
+  h2 { scroll-margin-top: 64px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin: 0 0 16px; }
+  .sec-head .idx { font-family: var(--mono); color: var(--gpu); font-size: 14px; font-weight: 600; }
+  h2 { font-size: clamp(22px, 3.2vw, 30px); font-weight: 720; margin: 0; }
+  h3 { font-size: 17px; font-weight: 680; margin: 26px 0 8px; color: var(--ink); }
+  h4 { font-family: var(--sans); font-size: 15px; margin: 0 0 2px; font-weight: 680; }
   .col p { margin: 14px 0; }
+  .grp-band { font-family: var(--sans); font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .12em; color: var(--faint); padding-top: 6px; }
 
   /* ---- panels / callouts ---- */
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-    padding: 20px 22px; box-shadow: var(--shadow); margin: 22px 0; }
+    padding: 18px 20px; box-shadow: var(--shadow); margin: 20px 0; }
   .callout { border-left: 3px solid var(--gpu); background: var(--panel-2);
-    border-radius: 0 12px 12px 0; padding: 14px 18px; margin: 20px 0; font-size: 16.5px; }
+    border-radius: 0 12px 12px 0; padding: 14px 18px; margin: 20px 0; font-size: 16px; }
   .callout.warn { border-color: var(--warn); }
   .callout.void { border-color: var(--bad); }
-  .callout .lab { font-family: var(--sans); font-size: 11.5px; font-weight: 700;
+  .callout.tp { border-color: var(--tp); }
+  .callout .lab { font-family: var(--sans); font-size: 11px; font-weight: 700;
     text-transform: uppercase; letter-spacing: .1em; color: var(--faint); display: block;
     margin-bottom: 4px; }
+  ul.clean { padding-left: 1.1em; } ul.clean li { margin: 8px 0; }
+
+  /* ---- KPI cards ---- */
+  .kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 22px 0; }
+  .kpi .c { border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    box-shadow: var(--shadow); padding: 14px 16px; }
+  .kpi .n { font-family: var(--sans); font-weight: 780; font-size: 25px; letter-spacing: -.02em; }
+  .kpi .n .u { font-size: 14px; color: var(--muted); font-weight: 600; }
+  .kpi .l { font-family: var(--sans); font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .kpi .n.gpu { color: var(--gpu); } .kpi .n.cpu { color: var(--cpu); } .kpi .n.tp { color: var(--tp); }
+
+  .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+  @media (max-width: 680px) { .cols2 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 2px; }
 
   /* ---- tables ---- */
-  .tbl-scroll { overflow-x: auto; margin: 20px 0; border: 1px solid var(--line);
+  .tbl-scroll { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line);
     border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); }
   table { border-collapse: collapse; width: 100%; font-family: var(--mono);
-    font-size: 13.5px; font-variant-numeric: tabular-nums; }
+    font-size: 13px; font-variant-numeric: tabular-nums; }
   caption { text-align: left; font-family: var(--sans); font-size: 13px; color: var(--muted);
-    padding: 12px 16px 0; }
-  th, td { padding: 8px 14px; text-align: right; white-space: nowrap;
-    border-bottom: 1px solid var(--line); }
+    padding: 12px 16px 2px; }
+  th, td { padding: 7px 13px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
-  thead th { font-family: var(--sans); font-size: 11.5px; text-transform: uppercase;
-    letter-spacing: .05em; color: var(--muted); font-weight: 650; position: sticky; top: 0;
-    background: var(--panel); }
+  thead th { font-family: var(--sans); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); font-weight: 650; }
   tbody tr:last-child td { border-bottom: none; }
   tr.peak td { background: var(--gpu-soft); font-weight: 680; }
   tr.dim td { color: var(--muted); }
+  td.gpu { color: var(--gpu); font-weight: 650; } td.cpu { color: var(--cpu); font-weight: 650; }
+  td.tp { color: var(--tp); font-weight: 650; } td.bad { color: var(--bad); font-weight: 650; }
+  td.good { color: var(--good); font-weight: 650; }
+  .tbl-scroll details { margin: 0; }
+  .tbl-scroll > details > summary { cursor: pointer; font-family: var(--sans); font-size: 13px;
+    color: var(--gpu); padding: 12px 16px; font-weight: 600; list-style: none; }
+  .tbl-scroll > details > summary::-webkit-details-marker { display: none; }
+  .tbl-scroll > details > summary::before { content: "\25B8  "; }
+  .tbl-scroll > details[open] > summary::before { content: "\25BE  "; }
+
   .tag { font-family: var(--sans); font-size: 11px; font-weight: 700; padding: 2px 8px;
     border-radius: 999px; letter-spacing: .03em; }
   .tag.gpu { background: var(--gpu-soft); color: var(--gpu); }
   .tag.cpu { background: var(--cpu-soft); color: var(--cpu); }
-  .tag.void { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .tag.tp { background: var(--tp-soft); color: var(--tp); }
 
   /* ---- charts ---- */
-  figure { margin: 24px 0; }
+  figure { margin: 22px 0; }
   .chart { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-    padding: 18px 18px 10px; box-shadow: var(--shadow); }
-  .chart h4 { font-family: var(--sans); font-size: 15px; margin: 0 0 2px; font-weight: 680; }
+    padding: 18px 18px 12px; box-shadow: var(--shadow); }
   .chart .sub { font-family: var(--sans); font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--sans);
-    font-size: 12.5px; color: var(--muted); margin-top: 6px; }
-  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
-    vertical-align: -1px; margin-right: 6px; }
-  svg { display: block; width: 100%; height: auto; overflow: visible; }
-  .ax { stroke: var(--line-strong); stroke-width: 1; }
+    font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 14px; height: 11px; vertical-align: -1px; margin-right: 6px; position: relative; }
+  .legend i.gpu { background: var(--gpu); } .legend i.cpu { background: var(--cpu); } .legend i.tp { background: var(--tp); }
+  .legend i.ref { background: transparent; border-top: 2px dashed var(--faint); height: 0; top: -4px; }
+  .chart-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  @media (max-width: 900px) { .chart-3 { grid-template-columns: 1fr; } }
+
+  /* chart element classes (theme-aware, JS-free) */
   .grid { stroke: var(--line); stroke-width: 1; }
+  .ln-ref { stroke: var(--faint); stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }
   .axlab { font-family: var(--sans); font-size: 11px; fill: var(--faint); }
   .dotlab { font-family: var(--mono); font-size: 11px; fill: var(--ink); font-variant-numeric: tabular-nums; }
+  .lab-gpu { fill: var(--gpu); } .lab-cpu { fill: var(--cpu); } .lab-tp { fill: var(--tp); } .lab-muted { fill: var(--muted); }
+  .ln-gpu { stroke: var(--gpu); stroke-width: 2.5; stroke-linejoin: round; fill: none; }
+  .ln-cpu { stroke: var(--cpu); stroke-width: 2.5; stroke-linejoin: round; fill: none; }
+  .ln-tp  { stroke: var(--tp);  stroke-width: 2.5; stroke-linejoin: round; fill: none; }
+  .ln-dash { stroke-dasharray: 7 4; } .ln-dot { stroke-dasharray: 2 4; }
+  .mk-gpu { fill: var(--gpu); } .mk-cpu { fill: var(--cpu); } .mk-tp { fill: var(--tp); }
+  .mk-open { fill: var(--panel); stroke: var(--gpu); stroke-width: 2; }
+  .f-gpu { fill: var(--gpu); } .f-cpu { fill: var(--cpu); } .f-tp { fill: var(--tp); } .f-soft { opacity: .55; }
 
-  ul.clean { padding-left: 1.1em; } ul.clean li { margin: 8px 0; }
-  .foot { padding: 40px 0 70px; color: var(--muted); font-size: 15px; }
+  /* topology diagram */
+  .topo-numa { fill: none; stroke: var(--line-strong); stroke-width: 1.4; stroke-dasharray: 4 4; }
+  .topo-cpu { fill: var(--panel-2); stroke: var(--line-strong); stroke-width: 1.2; }
+  .topo-gpu5 { fill: var(--gpu-soft); stroke: var(--gpu); stroke-width: 1.5; }
+  .topo-gpu6 { fill: var(--cpu-soft); stroke: var(--cpu); stroke-width: 1.5; }
+  .topo-lab { font-family: var(--sans); font-size: 11px; fill: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+  .topo-t { font-family: var(--sans); font-size: 13px; fill: var(--ink); }
+  .topo-sub { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+  .topo-edge { font-family: var(--sans); font-size: 10px; fill: var(--muted); }
+  .topo-pcie, .topo-upi { stroke: var(--ink); stroke-width: 1.4; }
+  .topo-nolink { stroke: var(--bad); stroke-width: 1.6; stroke-dasharray: 3 3; }
+  .topo-nolab { font-family: var(--sans); font-size: 11px; fill: var(--bad); font-weight: 700; }
+
+  /* horizontal css bars (per-watt, thermal duty) */
+  .hbars { margin: 18px 0; }
+  .hbar { display: grid; grid-template-columns: 190px 1fr 62px; align-items: center; gap: 12px;
+    font-family: var(--sans); font-size: 13px; margin: 7px 0; }
+  .hbar .lab { color: var(--ink); }
+  .hbar .track { background: var(--panel-2); border-radius: 999px; height: 14px; overflow: hidden; border: 1px solid var(--line); }
+  .hbar .fill { height: 100%; border-radius: 999px; }
+  .hbar .fill.gpu { background: var(--gpu); } .hbar .fill.cpu { background: var(--cpu); } .hbar .fill.tp { background: var(--tp); }
+  .hbar .val { font-family: var(--mono); text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 560px) { .hbar { grid-template-columns: 130px 1fr 54px; font-size: 12px; } }
+
+  /* claim table */
+  .claim td:first-child { white-space: normal; }
+  .claim td { white-space: normal; vertical-align: top; }
+
+  /* back to top */
+  .totop { position: fixed; right: 18px; bottom: 18px; z-index: 90; font-family: var(--sans);
+    font-size: 12.5px; font-weight: 650; background: var(--panel); color: var(--gpu);
+    border: 1px solid var(--line-strong); border-radius: 999px; padding: 8px 14px;
+    text-decoration: none; box-shadow: var(--shadow); }
+
+  .foot { padding: 34px 0 90px; color: var(--muted); font-size: 15px; }
   .foot a { font-family: var(--mono); font-size: 14px; }
-  hr.soft { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
-  @media (prefers-reduced-motion: no-preference) {
-    .reveal { opacity: 0; transform: translateY(8px); transition: opacity .5s ease, transform .5s ease; }
-    .reveal.in { opacity: 1; transform: none; }
+  hr.soft { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+  .fn { font-size: 14.5px; color: var(--muted); }
+
+  @media (max-width: 900px) {
+    .layout { display: block; padding: 0 20px; }
+    .toc { display: none; }
+    .toc-m { display: block; }
+    .wrap { padding: 0 20px; }
+  }
+
+  @media print {
+    .topbar, .toc, .toc-m, .totop, .themectl, .skip { display: none !important; }
+    .layout { display: block; }
+    body { font-size: 12pt; background: #fff; color: #000; }
+    section { page-break-inside: avoid; border-color: #bbb; }
+    .chart, .panel, .callout, .tbl-scroll { box-shadow: none; }
+    a { color: #000; text-decoration: underline; }
   }
 </style>
+</head>
+<body id="top">
+
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="topbar">
+  <a class="brand" href="#top">One&nbsp;GPU&nbsp;&rarr;&nbsp;Two</a>
+  <details class="toc-m">
+    <summary>Contents</summary>
+    <div class="menu" id="toc-mobile">
+      <div class="grp">Overview</div>
+      <a href="#rules">1. Operating rules</a>
+      <a href="#method">2. Method &amp; definitions</a>
+      <div class="grp">Single GPU</div>
+      <a href="#pipeline">3. Artifact &amp; SVD probe</a>
+      <a href="#concurrency">4. Concurrency capacity</a>
+      <a href="#precision">5. Precision &amp; accuracy</a>
+      <a href="#context">6. Long context &amp; KV</a>
+      <a href="#engines">7. Engines</a>
+      <a href="#locust">8. Finite-user (Locust)</a>
+      <a href="#models">9. Model scaling</a>
+      <div class="grp">Multi GPU</div>
+      <a href="#topology">10. Two-GPU topology</a>
+      <a href="#single-cards">11. Single-card baselines</a>
+      <a href="#crossover">12. TP early, DP under load</a>
+      <a href="#tax">13. Topology &amp; thermal tax</a>
+      <a href="#placement-engine">14. Placement &times; engine</a>
+      <div class="grp">Decisions</div>
+      <a href="#decide">15. Decision guide</a>
+      <div class="grp">Trust &amp; Reproduction</div>
+      <a href="#caveats">16. Claims &amp; caveats</a>
+      <a href="#repro">17. Reproduction</a>
+    </div>
+  </details>
+  <span class="spacer"></span>
+  <div class="themectl" role="group" aria-label="Color theme">
+    <button type="button" data-theme-set="auto" aria-pressed="true">Auto</button>
+    <button type="button" data-theme-set="light" aria-pressed="false">Light</button>
+    <button type="button" data-theme-set="dark" aria-pressed="false">Dark</button>
+  </div>
+</div>
 
 <header class="hero">
   <div class="wrap hero-inner">
-    <div class="eyebrow">Field notes · 1× NVIDIA RTX A5000 (24&nbsp;GB) · Qwen3-4B&nbsp;·&nbsp;Q6_K&nbsp;·&nbsp;llama.cpp</div>
-    <h1>LLM Inference on a Single A5000</h1>
-    <p class="lede">A numbers-first field guide to what actually runs out first when you serve a small fine-tuned model from one GPU. In the short-chat regime it is not VRAM — not even the GPU's compute. Open the context window and keep sessions resident and it <b>flips to VRAM-bound</b> (<a href="context.html">Context &amp; accuracy</a>).</p>
+    <div class="eyebrow">Field notes &middot; RTX A5000 (24&nbsp;GB) + RTX A6000 (48&nbsp;GB) &middot; Qwen3-4B + legal-ops LoRA &middot; llama.cpp / vLLM / SGLang</div>
+    <h1>LLM Inference on RTX A5000/A6000: From One GPU to Two</h1>
+    <p class="lede">A single-GPU field guide and a heterogeneous multi-GPU tensor-parallel / data-parallel study. What actually runs out first when you serve a small fine-tuned model &mdash; and what changes when you add a second, bigger card on a slow interconnect. Every number is measured on one rig; read the caveats, they are the difference between quoting a number and understanding it.</p>
+    <div class="scopestrip" aria-label="Study scope">
+      <span class="chip warn">heterogeneous pair</span>
+      <span class="chip warn">no NVLink (SYS)</span>
+      <span class="chip warn">closed-loop</span>
+      <span class="chip warn">hardware-specific</span>
+      <span class="chip">Qwen3-4B, one model</span>
+      <span class="chip">source + render</span>
+    </div>
     <div class="statstrip">
-      <div class="stat gpu"><b>802</b><span>peak tok/s · C≈64</span></div>
-      <div class="stat"><b>6.56</b><span>bits / weight (Q6_K)</span></div>
-      <div class="stat gpu"><b>108</b><span>MiB VRAM / slot</span></div>
-      <div class="stat cpu"><b>2.5→29%</b><span>server CPU as C→128</span></div>
-      <div class="stat"><b>0</b><span>failures / 2,620 reqs</span></div>
+      <div class="stat gpu"><b>802 tok/s</b><span>peak aggregate, one A5000 &middot; C&asymp;64</span><span class="who">llama.cpp Q6_K &middot; barrier sweep</span></div>
+      <div class="stat gpu"><b>1.23&times;</b><span>data-parallel vs best single card @ C=64</span><span class="who">vLLM bf16 &middot; balanced shape</span></div>
+      <div class="stat tp"><b>1.55&times; &rarr; 1.04&times;</b><span>tensor-parallel vs best single, C=1&rarr;64</span><span class="who">vLLM bf16 &middot; balanced shape</span></div>
+      <div class="stat cpu"><b>8.68&ndash;10.97</b><span>tok/s per watt, single A5000 (best per-watt)</span><span class="who">board power &middot; balanced / decode peak</span></div>
     </div>
   </div>
 </header>
 
-<main class="wrap">
+<div class="layout">
 
-  <section>
+  <nav class="toc" aria-label="Table of contents" id="toc-desktop">
+    <div class="grp">Overview</div>
+    <a href="#rules" data-toc="rules">1. Operating rules</a>
+    <a href="#method" data-toc="method">2. Method &amp; definitions</a>
+    <div class="grp">Single GPU</div>
+    <a href="#pipeline" data-toc="pipeline">3. Artifact &amp; SVD probe</a>
+    <a href="#concurrency" data-toc="concurrency">4. Concurrency capacity</a>
+    <a href="#precision" data-toc="precision">5. Precision &amp; accuracy</a>
+    <a href="#context" data-toc="context">6. Long context &amp; KV</a>
+    <a href="#engines" data-toc="engines">7. Engines</a>
+    <a href="#locust" data-toc="locust">8. Finite-user (Locust)</a>
+    <a href="#models" data-toc="models">9. Model scaling</a>
+    <div class="grp">Multi GPU</div>
+    <a href="#topology" data-toc="topology">10. Two-GPU topology</a>
+    <a href="#single-cards" data-toc="single-cards">11. Single-card baselines</a>
+    <a href="#crossover" data-toc="crossover">12. TP early, DP under load</a>
+    <a href="#tax" data-toc="tax">13. Topology &amp; thermal tax</a>
+    <a href="#placement-engine" data-toc="placement-engine">14. Placement &times; engine</a>
+    <div class="grp">Decisions</div>
+    <a href="#decide" data-toc="decide">15. Decision guide</a>
+    <div class="grp">Trust &amp; Reproduction</div>
+    <a href="#caveats" data-toc="caveats">16. Claims &amp; caveats</a>
+    <a href="#repro" data-toc="repro">17. Reproduction</a>
+  </nav>
+
+  <main id="main">
+
+  <!-- ==================== OVERVIEW ==================== -->
+  <section id="rules" data-grp="Overview">
+    <div class="sec-head"><span class="idx">1</span><h2>The operating rules</h2></div>
     <div class="col">
-      <p class="eyebrow" style="margin-bottom:8px">Deep-dive companion pages</p>
-      <p style="font-size:15.5px;margin-top:0"><a href="concurrency.html">Concurrency capacity</a> · <a href="context.html">Context window &amp; accuracy</a> · <a href="precision.html">Precision knobs</a> · <a href="engines.html">Engines (llama.cpp vs vLLM vs SGLang)</a> · <a href="models.html">Model choice at 4-bit</a> · <a href="lora.html">LoRA &amp; SVD probe</a> · <a href="locust.html">Locust finite-user load</a></p>
-      <p style="font-size:16px;color:var(--muted);margin-top:8px">A 4B model at Q6_K is ~3.3&nbsp;GB — tiny against 24&nbsp;GB. So the question was never <em>"does it fit?"</em> It's <em>"how many users, how fast, and what breaks first?"</em> Most of what follows is measured on one rig (§6 adds literature-sourced nuances, cited); the caveats in §8 are the difference between seeing a number and understanding it. The <a href="engines.html">engine comparison</a> was VOID on the first try (vLLM crashed) and is now <b>fixed and re-run</b> (llama.cpp vs vLLM vs SGLang at matched bf16); the "extract a LoRA with SVD" probe measures something subtler than its nickname; and <a href="models.html">§10</a> extends the study to <b>Qwen3.5-9B and Gemma-4-E2B at 4-bit</b>.</p>
+      <p>Six findings carry the whole study. Everything after this section is the evidence and the caveats behind them.</p>
+      <ul class="clean">
+        <li><b>Short-context concurrency becomes host-bound.</b> On one A5000, aggregate throughput climbs to a broad plateau (C=32&ndash;64), <b>peaks at ~802 tok/s at C=64, then declines</b> &mdash; the limiter leaves the GPU (util median 94%&rarr;41%, power 229&rarr;168&nbsp;W) while the server process CPU rises ~11&times;. <a href="#concurrency">&sect;4</a></li>
+        <li><b>Long context flips the constraint to VRAM.</b> Keep multi-turn sessions resident and KV cache (f16 = 144&nbsp;KiB/token) becomes binding: "30 users" fits <em>only</em> as a q8_0-at-8k edge case. <a href="#context">&sect;6</a></li>
+        <li><b>Low-bit weights accelerate decode.</b> Decode is bandwidth-bound (Q4_K_M is 2.18&times; bf16); prefill is compute-bound and flat across bit-width. <a href="#precision">&sect;5</a></li>
+        <li><b>vLLM / SGLang win under concurrency.</b> At matched bf16, C=1 is a tie (llama.cpp&nbsp;61 &asymp; vLLM&nbsp;68); by C=64 vLLM and SGLang are ~4&times; llama.cpp. <a href="#engines">&sect;7</a></li>
+        <li><b>Data-parallel is the dependable two-GPU throughput choice under load.</b> Two independent replicas beat the best single card once enough concurrent work engages both; the margin grows with C (to 1.23&times; balanced, 1.38&times; prefill). <a href="#crossover">&sect;12</a></li>
+        <li><b>Tensor-parallel is a narrow low-concurrency tool with worse TTFT.</b> It wins single-stream (~1.5&times; on balanced/decode) but erodes to near-parity or a loss under load, and always raises time-to-first-token. <a href="#crossover">&sect;12</a></li>
+      </ul>
+      <div class="callout warn"><span class="lab">Scope &mdash; read before quoting anything</span>This is one heterogeneous box (A5000&nbsp;+&nbsp;A6000), <b>no NVLink</b> (<code>nvidia-smi topo</code> = <code>SYS</code>), <b>cross-NUMA PCIe&nbsp;Gen3</b>, a <b>single 4B model</b>, <b>closed-loop</b> (barrier-synchronous or finite-user-with-think-time, never open-loop Poisson arrivals), and <b>hardware- and build-specific</b>. Numbers do not transfer to other GPUs, interconnects, models, or arrival processes.</div>
     </div>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§1</span><h2>Concurrency capacity — the core finding</h2></div>
+  <section id="method" data-grp="Overview">
+    <div class="sec-head"><span class="idx">2</span><h2>What was measured &mdash; and what the metrics mean</h2></div>
     <div class="col">
-      <p><b>Method (label it precisely):</b> llama.cpp, closed-loop <em>barrier-synchronous</em> load, <code>ignore_eos</code>, ~242-token prompts (231–253) / exactly 256 generated, <code>--parallel == C</code>, 768-token slots. This is a <b>saturation-capacity probe</b>, not a real arrival-pattern test — keep that for §6.</p>
-      <p>Aggregate throughput climbs to a broad plateau over <b>C = 32–64</b>, <b>peaks at C = 64 (801.8 tok/s)</b>, then <b>declines</b> to 749 by C = 128. There is no simple "knee at 30": the biggest single batching win is C8→C16 (+262 tok/s), and marginal gain goes <em>negative</em> past 64.</p>
+      <p>Two probe families, deliberately not comparable to each other. A <b>saturation sweep</b> is a barrier-synchronous, fully-backlogged closed loop (fixed prompt corpus, <code>ignore_eos</code>, <code>--parallel == C</code>): it measures capacity ceilings, not arrival latency. <b>Locust</b> runs a finite pool of users with think-time &mdash; more traffic-like, still closed-loop and throttled by the pool. The multi-GPU study uses a <b>fixed-server / vary-client</b> shape: each server boots once at <code>NP = max(C)</code> and the client sweeps concurrency. Definitions below are client-observed proxies, not kernel counters &mdash; that is exactly why the definitions matter.</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Hardware &amp; topology. Same memory bandwidth on both cards, different core counts and power limits.</caption>
+      <thead><tr><th>Field</th><th>GPU0 &mdash; RTX A5000</th><th>GPU1 &mdash; RTX A6000</th></tr></thead>
+      <tbody>
+        <tr><td>VRAM</td><td class="n">24,564 MiB</td><td class="n">49,140 MiB</td></tr>
+        <tr><td>Memory bandwidth</td><td class="n">~768 GB/s</td><td class="n">~768 GB/s</td></tr>
+        <tr><td>CUDA cores (SMs)</td><td class="n">8,192 (64)</td><td class="n">10,752 (84)</td></tr>
+        <tr><td>Board power limit</td><td class="n">230 W</td><td class="n">300 W</td></tr>
+        <tr><td>Compute capability</td><td class="n">8.6</td><td class="n">8.6</td></tr>
+        <tr><td>PCIe (measured)</td><td class="n">gen3 &times;16</td><td class="n">gen3 &times;16</td></tr>
+        <tr><td>NUMA node</td><td class="n">0</td><td class="n">1</td></tr>
+      </tbody>
+    </table></div>
+    <div class="cols2">
+      <div class="card">
+        <h3>Model &amp; engines</h3>
+        <ul class="clean" style="font-size:15px">
+          <li><b>Base:</b> Qwen3-4B-Instruct-2507 (rev <code>cdbee75f</code>, Apache-2.0) &mdash; 4B params, 2560 hidden, 151,936 vocab, tied embeddings.</li>
+          <li><b>Fine-tune:</b> legal-ops LoRA <code>r=16, &alpha;=32</code>, merged bit-exact into the base.</li>
+          <li><b>llama.cpp:</b> serves <b>Q6_K</b> GGUF (~3.3&nbsp;GB, 6.56&nbsp;bpw), CUDA build <code>91d2fc3</code>, f16 KV.</li>
+          <li><b>vLLM / SGLang:</b> serve <b>bf16</b> safetensors (<code>models/merged</code>); client + reporting on Python&nbsp;3.14.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Metric definitions</h3>
+        <ul class="clean" style="font-size:15px">
+          <li><b>Aggregate throughput</b> = &Sigma; completion_tokens / makespan over one global wall clock.</li>
+          <li><b>TTFT</b> (prefill proxy) = time to first streamed token &mdash; includes HTTP, queueing, scheduling, prefill; <em>not</em> isolated prefill-kernel time.</li>
+          <li><b>Decode tok/s</b> (decode proxy) = per-request median of <code>(gen&minus;1)/(latency&minus;TTFT)</code> &mdash; a user-visible rate, <b>never</b> summed across cards.</li>
+          <li><b>Fair-share</b> = aggregate &divide; C, the throughput each user would see if split evenly.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>The three multi-GPU workload shapes. Server booted at <code>NP = max(C)</code>; client sweeps C.</caption>
+      <thead><tr><th>Shape</th><th>prompt</th><th>gen</th><th>per-slot ctx</th><th>C points</th><th>engines</th></tr></thead>
+      <tbody>
+        <tr><td>balanced</td><td class="n">~256 tok</td><td class="n">256</td><td class="n">1024</td><td class="n">1, 8, 16, 32, 64</td><td>vLLM + llama.cpp</td></tr>
+        <tr><td>prefill-heavy</td><td class="n">~1240 tok</td><td class="n">32</td><td class="n">2048</td><td class="n">1, 4, 8, 16</td><td>vLLM only</td></tr>
+        <tr><td>decode-heavy</td><td class="n">~13 tok</td><td class="n">512</td><td class="n">1024</td><td class="n">1, 8, 16, 32, 64</td><td>vLLM only</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- ==================== SINGLE GPU ==================== -->
+  <section id="pipeline" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">3</span><h2>The artifact is verified &mdash; and arbitrary checkpoint deltas are not LoRAs</h2></div>
+    <div class="col">
+      <p>Every measurement serves one merged checkpoint, and its provenance chain is verified rather than assumed. The merge loads base in bf16, forces the LoRA <code>B@A</code> product to FP32, computes it, then casts <b>once</b> to bf16 (<code>merge_and_unload(safe_merge=True)</code>) and re-ties the head. The recorded checks: merged <code>q_proj</code> is <b>bit-exact</b> <code>base + (&alpha;/r)&middot;BA</code> across all 252 target tensors; tied embeddings preserved; <b>no <code>lm_head</code> synthesized</b>; chat-template SHA-256 match; GGUF filetype <code>MOSTLY_Q6_K</code>, <code>general.architecture == qwen3</code>, 151,936 vocab. Downstream: <b>0 failures across 2,620 requests</b> in the 1/30/100 Work-A run, with <code>tokens_predicted_total</code> matching the client exactly.</p>
+    </div>
+    <div class="callout warn"><span class="lab">Provenance honesty</span>The artifact's manifest records <code>source_git_commit = null</code> for the Work-A run &mdash; the model provenance is pinned, the exact code state of that run is not. Small, but stated.</div>
+
+    <h3>Is a merged LoRA "just a matmul"? The SVD-extraction probe</h3>
+    <div class="col">
+      <p>Mechanically, yes: a merged LoRA is <code>W + (&alpha;/r)&middot;B&middot;A</code> &mdash; base weights plus a low-rank matmul. The tempting leap is <em>"so I can subtract any two checkpoints, SVD the difference, and recover the LoRA that made it."</em> The probe tests exactly that with a <b>control</b> (a delta we <em>know</em> is a rank-16 LoRA) and a <b>treatment</b> (the delta between two published checkpoints).</p>
+      <div class="kpi">
+        <div class="c"><div class="n gpu">74.2<span class="u">%</span></div><div class="l">rank-16 SVD retained energy &mdash; known r=16 LoRA (control)</div></div>
+        <div class="c"><div class="n cpu">3.55<span class="u">%</span></div><div class="l">rank-16 SVD retained energy &mdash; inter-checkpoint delta</div></div>
+      </div>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>SVD of the weight delta &Delta;W across 252 target-linear matrices.</caption>
+      <thead><tr><th>Metric</th><th>Control: known r=16 LoRA</th><th>Instruct-2507 &minus; Base</th></tr></thead>
+      <tbody>
+        <tr><td>mean effective rank (energy-entropy, /2560)</td><td class="n">42.83</td><td class="n">1,507.3</td></tr>
+        <tr><td>mean stable rank</td><td class="n">2.27</td><td class="n">247.87</td></tr>
+        <tr><td>mean rel. delta &Vert;&Delta;W&Vert; / &Vert;W&Vert;</td><td class="n">0.00195 (~0.2%)</td><td class="n">0.16952 (~17%)</td></tr>
+        <tr class="peak"><td>rank-16 retained Frobenius energy</td><td class="n">74.2%</td><td class="n">3.55%</td></tr>
+        <tr><td>rank-256 / rank-512 retained energy</td><td class="n">&mdash;</td><td class="n">29.1% / 47.4%</td></tr>
+        <tr><td>embed_tokens rel. delta</td><td class="n">0.0</td><td class="n">0.2041 (~20.4%)</td></tr>
+        <tr><td>rank-16 retained: attn / mlp</td><td class="n">74.2% / 74.3%</td><td class="n">5.45% / 2.84%</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout"><span class="lab">Mandatory framing &mdash; do not skip</span>
+      <ul class="clean" style="margin:4px 0">
+        <li><b>It is an inter-checkpoint delta, not a proven full fine-tune.</b> Instruct-2507 declares no <code>base_model</code>; its production process is not established from these artifacts.</li>
+        <li>Any rank-r SVD of a weight delta is <b>"LoRA-representable," never "a working extracted LoRA"</b> &mdash; no task behavior was trained or validated.</li>
+        <li>The high-rank result <b>does not refute "LoRA can match full fine-tuning"</b> (cf. Thinking Machines, <a href="https://thinkingmachines.ai/blog/lora/"><em>LoRA Without Regret</em></a>): a <em>trained</em> low-rank adapter stores task-relevant information, not the full weight delta &mdash; orthogonal to this measurement.</li>
+        <li><b>bf16 read-back inflates the floors:</b> the control reads as eff-rank ~43 (not 16) and ~74% (not 100%) because bf16 rounding noise smears energy against a delta only ~0.2% of the base norm &mdash; the intended calibration baseline, applied to both deltas.</li>
+      </ul>
+      <b>Takeaway:</b> "merged LoRA = base + low-rank matmul" is true; "so I can SVD any diff back into a LoRA" is false in general &mdash; the real between-checkpoint delta is high-rank, embedding-shifting (~20%, which a target-linear LoRA cannot represent), and MLP-heavy.</div>
+  </section>
+
+  <section id="concurrency" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">4</span><h2>One A5000 peaks at C=64 &mdash; but per-user experience degrades throughout</h2></div>
+    <div class="col">
+      <p><b>Method:</b> llama.cpp, closed-loop barrier-synchronous load, <code>ignore_eos</code>, a fixed corpus averaging ~242 tokens (231&ndash;253) with exactly 256 generated tokens, <code>--parallel == C</code>, 768-token slots, f16 KV. A <b>saturation-capacity probe</b>, not a real arrival-pattern test.</p>
+      <p>Aggregate throughput rises to a broad plateau over C=32&ndash;64, <b>peaks at C=64 = 801.8 tok/s</b> (48,108 tok/min, 6.77&times; single-stream), then <b>falls</b> to 772.7 at C=96 and 749.3 at C=128. There is no simple "knee at 30": the biggest single batching win is C8&rarr;C16 (+262 tok/s), and marginal gain goes <em>negative</em> past 64 (C64&rarr;96 &minus;29, C96&rarr;128 &minus;23).</p>
     </div>
 
-    <figure class="chart reveal">
+    <figure class="chart">
       <h4>Throughput rises, plateaus, then declines</h4>
-      <p class="sub">Aggregate output tok/s vs concurrency (log axis). The peak is at C=64 — beyond it, more streams <em>lose</em> throughput.</p>
-      <div id="c-throughput"></div>
+      <p class="sub">Aggregate output tok/s vs concurrency (log axis). Peak at C=64; beyond it, more streams <em>lose</em> throughput.</p>
+      <svg viewBox="0 0 880 330" role="img" aria-labelledby="tA-t tA-d" preserveAspectRatio="xMidYMid meet">
+<title id="tA-t">Aggregate throughput versus concurrency on one RTX A5000</title>
+<desc id="tA-d">Aggregate output tokens per second rises from 118 at C=1 to a broad plateau, peaks at 802 tok/s at C=64, then declines to 749 at C=128.</desc>
+<line class="grid" x1="54" y1="288.0" x2="862" y2="288.0"/>
+<text class="axlab" x="46" y="292.0" text-anchor="end">0</text>
+<line class="grid" x1="54" y1="221.0" x2="862" y2="221.0"/>
+<text class="axlab" x="46" y="225.0" text-anchor="end">225</text>
+<line class="grid" x1="54" y1="154.0" x2="862" y2="154.0"/>
+<text class="axlab" x="46" y="158.0" text-anchor="end">450</text>
+<line class="grid" x1="54" y1="87.0" x2="862" y2="87.0"/>
+<text class="axlab" x="46" y="91.0" text-anchor="end">675</text>
+<line class="grid" x1="54" y1="20.0" x2="862" y2="20.0"/>
+<text class="axlab" x="46" y="24.0" text-anchor="end">900</text>
+<text class="axlab" x="54.0" y="308" text-anchor="middle">1</text>
+<text class="axlab" x="169.4" y="308" text-anchor="middle">2</text>
+<text class="axlab" x="284.9" y="308" text-anchor="middle">4</text>
+<text class="axlab" x="400.3" y="308" text-anchor="middle">8</text>
+<text class="axlab" x="515.7" y="308" text-anchor="middle">16</text>
+<text class="axlab" x="583.2" y="308" text-anchor="middle">24</text>
+<text class="axlab" x="631.1" y="308" text-anchor="middle">32</text>
+<text class="axlab" x="698.7" y="308" text-anchor="middle">48</text>
+<text class="axlab" x="746.6" y="308" text-anchor="middle">64</text>
+<text class="axlab" x="814.1" y="308" text-anchor="middle">96</text>
+<text class="axlab" x="862.0" y="308" text-anchor="middle">128</text>
+<path class="ln-gpu" fill="none" d="M54.0 252.7 L169.4 226.8 L284.9 200.6 L400.3 176.2 L515.7 98.1 L583.2 78.3 L631.1 65.1 L698.7 53.1 L746.6 49.2 L814.1 57.9 L862.0 64.9"/>
+<circle class="mk-open lnstroke-gpu" cx="54.0" cy="252.7" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="169.4" cy="226.8" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="284.9" cy="200.6" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="400.3" cy="176.2" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="515.7" cy="98.1" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="583.2" cy="78.3" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="631.1" cy="65.1" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="698.7" cy="53.1" r="3.3"/>
+<circle class="mk-gpu" cx="746.6" cy="49.2" r="6"/>
+<text class="dotlab" x="746.6" y="36.2" text-anchor="middle" font-weight="700">802 @ C=64</text>
+<circle class="mk-open lnstroke-gpu" cx="814.1" cy="57.9" r="3.3"/>
+<circle class="mk-open lnstroke-gpu" cx="862.0" cy="64.9" r="3.3"/>
+<text class="dotlab lab-cpu" x="814.1" y="46.9" text-anchor="middle">&#8595;773</text>
+<text class="dotlab lab-cpu" x="862.0" y="53.9" text-anchor="middle">&#8595;749</text>
+<text class="axlab" x="10" y="16">tok/s</text>
+<text class="axlab" x="862" y="326" text-anchor="end">concurrency C (log)</text>
+</svg>
     </figure>
 
     <div class="col">
       <h3>The per-user view collapses the whole way up</h3>
-      <p>Fair-share throughput (aggregate ÷ C) falls from the first step: 118 → 12.5 at the peak → <b>5.9 tok/s at C=128</b> (a 20× degradation). Because each request emits a fixed 256 tokens, latency is just its inverse: p50 climbs <b>2.2 s → 43.6 s</b>. At the throughput peak, each user already waits ~20 s. <b>"Max throughput" and "good latency" are different operating points.</b></p>
-      <h3>What actually breaks first: the bottleneck leaves the GPU</h3>
-      <p>This is the counterintuitive core. As C rises, the <b>GPU does less</b> (util median 94%→41%, power 229&nbsp;W→168&nbsp;W) while the <b>llama-server process CPU rises ~11×</b> (2.5%→29%). The GPU isn't idle — it's <em>bursty/starved</em>: p95 util pins at 99% while the median sits at ~40%, a distribution consistent with gaps between batches. The evidence <b>most strongly points to</b> a host-side feed/orchestration bottleneck (CPU-scheduling overhead the leading candidate); we did not profile to isolate the exact mechanism.</p>
+      <p>Fair-share throughput (aggregate &divide; C) falls from the first step: 118.4 &rarr; 12.5 at the C=64 peak &rarr; <b>5.9 at C=128</b> (a 20.1&times; degradation). Because each request emits a fixed 256 tokens, latency is its inverse: p50 climbs <b>2.18&nbsp;s &rarr; 43.64&nbsp;s</b>. At the throughput <em>peak</em>, each user already waits ~20.4&nbsp;s. TTFT p50 stays sub-second at every C, but the tail explodes (TTFT p95 0.08&nbsp;s &rarr; 4.05&nbsp;s, ~50&times;). <b>"Throughput-optimal" and "latency-acceptable" are different operating points.</b></p>
+      <h3>What breaks first: the bottleneck leaves the GPU</h3>
+      <p>As C rises the <b>GPU does less</b> (util median 94%&rarr;41%, power 229&nbsp;W&rarr;168&nbsp;W, dipping to 141&nbsp;W at C=96) while the <b>llama-server process CPU rises ~11&times;</b> (2.55%&rarr;29.13%). The GPU isn't idle &mdash; it is <em>bursty and starved</em>: p95 util pins at 99% while the median sits near 40%, a distribution consistent with gaps between batches. The evidence <b>most strongly points to</b> a host-side feed/orchestration bottleneck (CPU-scheduling the leading candidate); no profiler was run, so the exact mechanism is not isolated.</p>
     </div>
 
-    <figure class="chart reveal">
-      <h4>The crossover: GPU falls, host CPU rises</h4>
-      <p class="sub">The limiter moves off the GPU toward host-side feed/orchestration (leading candidate: CPU scheduling — not isolated) — consistent with throughput peaking then declining.</p>
-      <div id="c-crossover"></div>
-      <div class="legend"><span><i style="background:var(--gpu)"></i>GPU util median (%)</span><span><i style="background:var(--cpu)"></i>llama-server process CPU (%)</span></div>
+    <figure class="chart">
+      <h4>The crossover: GPU utilization falls, host CPU rises</h4>
+      <p class="sub">Both series on a shared 0&ndash;100% axis. The limiter moves off the GPU toward host-side feed/orchestration &mdash; consistent with throughput peaking then declining.</p>
+      <svg viewBox="0 0 880 330" role="img" aria-labelledby="tB-t tB-d" preserveAspectRatio="xMidYMid meet">
+<title id="tB-t">GPU utilization falls while host-process CPU rises with concurrency</title>
+<desc id="tB-d">Median GPU utilization drops from 94 percent at C=1 to 41 percent at C=128, while llama-server process CPU climbs about elevenfold from 2.55 to 29.13 percent. Both plotted on a shared 0 to 100 percent axis.</desc>
+<line class="grid" x1="54" y1="288.0" x2="862" y2="288.0"/>
+<text class="axlab" x="46" y="292.0" text-anchor="end">0</text>
+<line class="grid" x1="54" y1="221.0" x2="862" y2="221.0"/>
+<text class="axlab" x="46" y="225.0" text-anchor="end">25</text>
+<line class="grid" x1="54" y1="154.0" x2="862" y2="154.0"/>
+<text class="axlab" x="46" y="158.0" text-anchor="end">50</text>
+<line class="grid" x1="54" y1="87.0" x2="862" y2="87.0"/>
+<text class="axlab" x="46" y="91.0" text-anchor="end">75</text>
+<line class="grid" x1="54" y1="20.0" x2="862" y2="20.0"/>
+<text class="axlab" x="46" y="24.0" text-anchor="end">100</text>
+<text class="axlab" x="54.0" y="308" text-anchor="middle">1</text>
+<text class="axlab" x="169.4" y="308" text-anchor="middle">2</text>
+<text class="axlab" x="284.9" y="308" text-anchor="middle">4</text>
+<text class="axlab" x="400.3" y="308" text-anchor="middle">8</text>
+<text class="axlab" x="515.7" y="308" text-anchor="middle">16</text>
+<text class="axlab" x="583.2" y="308" text-anchor="middle">24</text>
+<text class="axlab" x="631.1" y="308" text-anchor="middle">32</text>
+<text class="axlab" x="698.7" y="308" text-anchor="middle">48</text>
+<text class="axlab" x="746.6" y="308" text-anchor="middle">64</text>
+<text class="axlab" x="814.1" y="308" text-anchor="middle">96</text>
+<text class="axlab" x="862.0" y="308" text-anchor="middle">128</text>
+<path class="ln-gpu" fill="none" d="M54.0 36.1 L169.4 44.1 L284.9 57.5 L400.3 73.6 L515.7 124.5 L583.2 143.3 L631.1 154.0 L698.7 170.1 L746.6 164.7 L814.1 186.2 L862.0 178.1"/>
+<path class="ln-cpu ln-dash" fill="none" d="M54.0 281.2 L169.4 281.0 L284.9 280.8 L400.3 280.5 L515.7 277.6 L583.2 273.9 L631.1 268.7 L698.7 260.0 L746.6 251.0 L814.1 231.0 L862.0 209.9"/>
+<circle class="mk-gpu" cx="54.0" cy="36.1" r="2.9"/>
+<circle class="mk-gpu" cx="169.4" cy="44.1" r="2.9"/>
+<circle class="mk-gpu" cx="284.9" cy="57.5" r="2.9"/>
+<circle class="mk-gpu" cx="400.3" cy="73.6" r="2.9"/>
+<circle class="mk-gpu" cx="515.7" cy="124.5" r="2.9"/>
+<circle class="mk-gpu" cx="583.2" cy="143.3" r="2.9"/>
+<circle class="mk-gpu" cx="631.1" cy="154.0" r="2.9"/>
+<circle class="mk-gpu" cx="698.7" cy="170.1" r="2.9"/>
+<circle class="mk-gpu" cx="746.6" cy="164.7" r="2.9"/>
+<circle class="mk-gpu" cx="814.1" cy="186.2" r="2.9"/>
+<circle class="mk-gpu" cx="862.0" cy="178.1" r="2.9"/>
+<rect class="mk-cpu" x="51.4" y="278.6" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="166.8" y="278.4" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="282.3" y="278.2" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="397.7" y="277.9" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="513.1" y="275.0" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="580.6" y="271.3" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="628.5" y="266.1" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="696.1" y="257.4" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="744.0" y="248.4" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="811.5" y="228.4" width="5.2" height="5.2"/>
+<rect class="mk-cpu" x="859.4" y="207.3" width="5.2" height="5.2"/>
+<text class="dotlab lab-gpu" x="60.0" y="28.1">94%</text>
+<text class="dotlab lab-cpu" x="862.0" y="199.9" text-anchor="end">29%</text>
+<text class="axlab" x="10" y="16">%</text>
+<text class="axlab" x="862" y="326" text-anchor="end">concurrency C (log)</text>
+</svg>
+      <div class="legend"><span><i class="gpu"></i>GPU util median (%)</span><span><i class="cpu"></i>llama-server process CPU (%)</span></div>
     </figure>
 
-    <div class="callout warn"><span class="lab">Measurement hygiene</span>nvidia-smi <code>utilization.memory</code> is the fraction of time the memory controller was busy — a proxy, <b>not</b> GB/s. It falls at high C simply because the GPU idles more between bursts. No bandwidth claim rests on it.</div>
+    <div class="callout warn"><span class="lab">Measurement hygiene</span>The "MemCtrl proxy %" (nvidia-smi <code>utilization.memory</code>, 71&rarr;26%) is the <em>fraction of time the memory controller was busy</em> &mdash; a proxy, <b>not</b> achieved bandwidth in GB/s. It falls at high C simply because the GPU idles more between bursts. No bandwidth claim rests on it.</div>
 
-    <figure class="chart reveal">
-      <h4>VRAM is preallocated per configured slot — not per live request</h4>
-      <p class="sub">A near-perfect line: 108.07 MiB/slot + 3,476 MiB base (R² = 1.00000). Running fewer requests than slots does not reclaim KV.</p>
-      <div id="c-vram"></div>
+    <figure class="chart">
+      <h4>VRAM is preallocated per configured slot &mdash; not per live request</h4>
+      <p class="sub">A near-perfect line: 108.07 MiB/slot + 3,475.6 MiB base (R&sup2; = 1.00000). Running fewer requests than slots does not reclaim KV; <code>mem_used</code> is flat across the run.</p>
+      <svg viewBox="0 0 880 330" role="img" aria-labelledby="tC-t tC-d" preserveAspectRatio="xMidYMid meet">
+<title id="tC-t">VRAM at idle is linear in configured slots</title>
+<desc id="tC-d">Server-ready idle VRAM fits 108.07 MiB per slot plus a 3476 MiB base, R squared 1.00000. Measured points lie exactly on the fitted line from 3584 MiB at 1 slot to 17308 MiB at 128 slots.</desc>
+<line class="grid" x1="54" y1="288.0" x2="862" y2="288.0"/>
+<text class="axlab" x="46" y="292.0" text-anchor="end">0k</text>
+<line class="grid" x1="54" y1="221.0" x2="862" y2="221.0"/>
+<text class="axlab" x="46" y="225.0" text-anchor="end">4k</text>
+<line class="grid" x1="54" y1="154.0" x2="862" y2="154.0"/>
+<text class="axlab" x="46" y="158.0" text-anchor="end">9k</text>
+<line class="grid" x1="54" y1="87.0" x2="862" y2="87.0"/>
+<text class="axlab" x="46" y="91.0" text-anchor="end">14k</text>
+<line class="grid" x1="54" y1="20.0" x2="862" y2="20.0"/>
+<text class="axlab" x="46" y="24.0" text-anchor="end">18k</text>
+<text class="axlab" x="54.0" y="308" text-anchor="middle">1</text>
+<text class="axlab" x="169.4" y="308" text-anchor="middle">2</text>
+<text class="axlab" x="284.9" y="308" text-anchor="middle">4</text>
+<text class="axlab" x="400.3" y="308" text-anchor="middle">8</text>
+<text class="axlab" x="515.7" y="308" text-anchor="middle">16</text>
+<text class="axlab" x="583.2" y="308" text-anchor="middle">24</text>
+<text class="axlab" x="631.1" y="308" text-anchor="middle">32</text>
+<text class="axlab" x="698.7" y="308" text-anchor="middle">48</text>
+<text class="axlab" x="746.6" y="308" text-anchor="middle">64</text>
+<text class="axlab" x="814.1" y="308" text-anchor="middle">96</text>
+<text class="axlab" x="862.0" y="308" text-anchor="middle">128</text>
+<path class="ln-ref" fill="none" d="M54.0 234.6 L169.4 233.0 L284.9 229.8 L400.3 223.4 L515.7 210.5 L583.2 197.6 L631.1 184.8 L698.7 159.0 L746.6 133.3 L814.1 81.8 L862.0 30.3"/>
+<circle class="mk-gpu" cx="54.0" cy="234.6" r="3.4"/>
+<circle class="mk-gpu" cx="169.4" cy="233.0" r="3.4"/>
+<circle class="mk-gpu" cx="284.9" cy="229.8" r="3.4"/>
+<circle class="mk-gpu" cx="400.3" cy="223.4" r="3.4"/>
+<circle class="mk-gpu" cx="515.7" cy="210.5" r="3.4"/>
+<circle class="mk-gpu" cx="583.2" cy="197.6" r="3.4"/>
+<circle class="mk-gpu" cx="631.1" cy="184.8" r="3.4"/>
+<circle class="mk-gpu" cx="698.7" cy="159.0" r="3.4"/>
+<circle class="mk-gpu" cx="746.6" cy="133.3" r="3.4"/>
+<circle class="mk-gpu" cx="814.1" cy="81.7" r="3.4"/>
+<circle class="mk-gpu" cx="862.0" cy="30.3" r="3.4"/>
+<text class="dotlab lab-muted" x="862" y="34" text-anchor="end">108.07 MiB/slot &#183; R&#178;=1.00000</text>
+<text class="axlab" x="10" y="16">MiB</text>
+<text class="axlab" x="862" y="326" text-anchor="end">configured slots (log)</text>
+</svg>
     </figure>
+    <p class="col fn">The 768-token f16 KV cache for Qwen3-4B is ~108 MiB, which <em>is</em> the slope. Extrapolating, ~195 slots would fill the board &mdash; but throughput peaks at C=64 and declines, so VRAM never binds before the peak in this regime. It is not the constraint here.</p>
 
-    <div class="tbl-scroll">
+    <div class="tbl-scroll"><details><summary>Full concurrency sweep &mdash; the master table (E1, 12 points + Work-A cross-check)</summary>
       <table>
-        <caption>Concurrency sweep — the master numbers (E1, 12 points + Work-A cross-check).</caption>
-        <thead><tr><th>C</th><th class="n">Agg tok/s</th><th class="n">Speedup</th><th class="n">Fair-share</th><th class="n">Lat p50 (s)</th><th class="n">TTFT p95 (s)</th><th class="n">GPU util med/p95</th><th class="n">Power W</th><th class="n">Srv CPU %</th><th class="n">VRAM MiB</th></tr></thead>
+        <caption>llama.cpp, ~242-tok prompts / 256 gen, <code>--parallel = C</code>. Fair-share = aggregate &divide; C.</caption>
+        <thead><tr><th>C</th><th class="n">Agg tok/s</th><th class="n">tok/min</th><th class="n">Speedup</th><th class="n">Fair-share</th><th class="n">Lat p50 (s)</th><th class="n">Lat p95 (s)</th><th class="n">TTFT p50</th><th class="n">TTFT p95</th><th class="n">GPU util med/p95</th><th class="n">Power W</th><th class="n">Srv CPU %</th><th class="n">VRAM MiB</th></tr></thead>
         <tbody>
-          <tr><td>1</td><td class="n">118.4</td><td class="n">1.0×</td><td class="n">118.4</td><td class="n">2.18</td><td class="n">0.08</td><td class="n">94 / 95</td><td class="n">229</td><td class="n">2.55</td><td class="n">3,584</td></tr>
-          <tr><td>8</td><td class="n">375.4</td><td class="n">3.2×</td><td class="n">46.9</td><td class="n">5.45</td><td class="n">0.48</td><td class="n">80 / 94</td><td class="n">228</td><td class="n">2.80</td><td class="n">4,340</td></tr>
-          <tr><td>16</td><td class="n">637.6</td><td class="n">5.4×</td><td class="n">39.9</td><td class="n">6.42</td><td class="n">0.90</td><td class="n">61 / 99</td><td class="n">223</td><td class="n">3.87</td><td class="n">5,204</td></tr>
-          <tr><td>32</td><td class="n">748.5</td><td class="n">6.3×</td><td class="n">23.4</td><td class="n">10.94</td><td class="n">1.35</td><td class="n">50 / 92</td><td class="n">193</td><td class="n">7.22</td><td class="n">6,932</td></tr>
-          <tr><td>48</td><td class="n">789.0</td><td class="n">6.7×</td><td class="n">16.4</td><td class="n">15.54</td><td class="n">1.57</td><td class="n">44 / 99</td><td class="n">178</td><td class="n">10.44</td><td class="n">8,664</td></tr>
-          <tr class="peak"><td>64</td><td class="n">801.8</td><td class="n">6.8×</td><td class="n">12.5</td><td class="n">20.41</td><td class="n">2.20</td><td class="n">46 / 99</td><td class="n">174</td><td class="n">13.82</td><td class="n">10,388</td></tr>
-          <tr class="dim"><td>96</td><td class="n">772.7</td><td class="n">6.5×</td><td class="n">8.0</td><td class="n">31.79</td><td class="n">3.19</td><td class="n">38 / 99</td><td class="n">141</td><td class="n">21.26</td><td class="n">13,854</td></tr>
-          <tr class="dim"><td>128</td><td class="n">749.3</td><td class="n">6.3×</td><td class="n">5.9</td><td class="n">43.64</td><td class="n">4.05</td><td class="n">41 / 99</td><td class="n">168</td><td class="n">29.13</td><td class="n">17,308</td></tr>
+          <tr><td>1</td><td class="n">118.4</td><td class="n">7,105</td><td class="n">1.0&times;</td><td class="n">118.4</td><td class="n">2.18</td><td class="n">2.20</td><td class="n">0.073</td><td class="n">0.081</td><td class="n">94 / 95</td><td class="n">229</td><td class="n">2.55</td><td class="n">3,584</td></tr>
+          <tr><td>2</td><td class="n">205.5</td><td class="n">12,332</td><td class="n">1.7&times;</td><td class="n">102.8</td><td class="n">2.49</td><td class="n">2.54</td><td class="n">0.120</td><td class="n">0.138</td><td class="n">91 / 92</td><td class="n">229</td><td class="n">2.60</td><td class="n">3,692</td></tr>
+          <tr><td>4</td><td class="n">293.5</td><td class="n">17,613</td><td class="n">2.5&times;</td><td class="n">73.4</td><td class="n">3.48</td><td class="n">3.55</td><td class="n">0.227</td><td class="n">0.247</td><td class="n">86 / 87</td><td class="n">227</td><td class="n">2.67</td><td class="n">3,908</td></tr>
+          <tr><td>8</td><td class="n">375.4</td><td class="n">22,525</td><td class="n">3.2&times;</td><td class="n">46.9</td><td class="n">5.45</td><td class="n">5.48</td><td class="n">0.442</td><td class="n">0.482</td><td class="n">80 / 94</td><td class="n">228</td><td class="n">2.80</td><td class="n">4,340</td></tr>
+          <tr><td>16</td><td class="n">637.6</td><td class="n">38,258</td><td class="n">5.4&times;</td><td class="n">39.9</td><td class="n">6.42</td><td class="n">6.51</td><td class="n">0.585</td><td class="n">0.899</td><td class="n">61 / 99</td><td class="n">223</td><td class="n">3.87</td><td class="n">5,204</td></tr>
+          <tr><td>24</td><td class="n">704.2</td><td class="n">42,254</td><td class="n">5.9&times;</td><td class="n">29.3</td><td class="n">8.68</td><td class="n">8.77</td><td class="n">0.839</td><td class="n">1.101</td><td class="n">54 / 99</td><td class="n">203</td><td class="n">5.27</td><td class="n">6,072</td></tr>
+          <tr><td>32</td><td class="n">748.5</td><td class="n">44,911</td><td class="n">6.3&times;</td><td class="n">23.4</td><td class="n">10.94</td><td class="n">11.29</td><td class="n">0.892</td><td class="n">1.348</td><td class="n">50 / 92</td><td class="n">193</td><td class="n">7.22</td><td class="n">6,932</td></tr>
+          <tr><td>32b</td><td class="n">744.1</td><td class="n">44,645</td><td class="n">6.3&times;</td><td class="n">23.3</td><td class="n">11.00</td><td class="n">11.46</td><td class="n">0.901</td><td class="n">1.310</td><td class="n">53 / 99</td><td class="n">196</td><td class="n">7.17</td><td class="n">6,932</td></tr>
+          <tr><td>48</td><td class="n">789.0</td><td class="n">47,338</td><td class="n">6.7&times;</td><td class="n">16.4</td><td class="n">15.54</td><td class="n">16.32</td><td class="n">0.933</td><td class="n">1.574</td><td class="n">44 / 99</td><td class="n">178</td><td class="n">10.44</td><td class="n">8,664</td></tr>
+          <tr class="peak"><td>64</td><td class="n">801.8</td><td class="n">48,108</td><td class="n">6.8&times;</td><td class="n">12.5</td><td class="n">20.41</td><td class="n">21.54</td><td class="n">0.966</td><td class="n">2.195</td><td class="n">46 / 99</td><td class="n">174</td><td class="n">13.82</td><td class="n">10,388</td></tr>
+          <tr class="dim"><td>96</td><td class="n">772.7</td><td class="n">46,360</td><td class="n">6.5&times;</td><td class="n">8.0</td><td class="n">31.79</td><td class="n">33.65</td><td class="n">0.902</td><td class="n">3.193</td><td class="n">38 / 99</td><td class="n">141</td><td class="n">21.26</td><td class="n">13,854</td></tr>
+          <tr class="dim"><td>128</td><td class="n">749.3</td><td class="n">44,958</td><td class="n">6.3&times;</td><td class="n">5.9</td><td class="n">43.64</td><td class="n">47.21</td><td class="n">0.659</td><td class="n">4.047</td><td class="n">41 / 99</td><td class="n">168</td><td class="n">29.13</td><td class="n">17,308</td></tr>
+          <tr class="dim"><td>WorkA 30</td><td class="n">720.5</td><td class="n">43,230</td><td class="n">5.9&times;</td><td class="n">24.0</td><td class="n">10.51</td><td class="n">11.34</td><td class="n">0.896</td><td class="n">0.959</td><td class="n">51 / 99</td><td class="n">194</td><td class="n">n/a</td><td class="n">6,744</td></tr>
+          <tr class="dim"><td>WorkA 100</td><td class="n">765.4</td><td class="n">45,927</td><td class="n">6.3&times;</td><td class="n">7.7</td><td class="n">33.26</td><td class="n">34.54</td><td class="n">0.647</td><td class="n">1.136</td><td class="n">41 / 99</td><td class="n">157</td><td class="n">n/a</td><td class="n">14,550</td></tr>
         </tbody>
       </table>
-    </div>
-    <p class="col" style="font-size:15px;color:var(--muted)">Prompts average ~242 tokens (231–253); generation is exactly 256. The server's <code>tokens_predicted_total</code> matched the client exactly at every point. The sweep had a single transient failure (C=24, 1 of 240; throughput computed on the rest); the independent Work-A 1/30/100 run had 0 failures across 2,620 requests. A C=32 repeat agreed within 0.6%.</p>
+    </details></div>
+    <p class="col fn">C=32b repeats C=32 within ~0.6% (run-to-run noise ~1%). Work-A is an independent run at 2&times; sampled tokens/worker &mdash; it lands on the same curve. C=24 had 1 failed request of 240 (throughput on the remaining 239); all other points 0 failures.</p>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§2</span><h2>Precision knobs — decode is bandwidth-bound, prefill is not</h2></div>
-    <div class="col"><p>Single-stream <code>llama-bench</code> micro-benchmarks (raw kernel throughput; a different quantity from the server numbers — don't cross the streams). Decode reads every weight once per token, so <b>fewer bits = faster decode</b>. Prefill is a big batched GEMM, so it's compute-bound and flat.</p></div>
-    <figure class="chart reveal">
-      <h4>Decode speed scales with weight size; prefill doesn't</h4>
-      <p class="sub">tg128 decode tok/s by weight quant. Q4_K_M is 2.18× BF16. (Prefill pp512 stays ~5,500–6,500 across all — compute-bound.)</p>
-      <div id="c-quant"></div>
-    </figure>
+  <section id="precision" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">5</span><h2>Precision buys decode speed; quality evidence is narrower than "accuracy"</h2></div>
     <div class="col">
-      <ul class="clean">
-        <li><b>Flash-attention: on</b> (this build/model). +15–21% prefill, +4–9% decode — effectively free here.</li>
-        <li><b>KV-cache dtype is a memory knob, barely a speed knob.</b> <code>q8_0</code> KV halves the KV footprint for ~4% decode cost — worth it only when KV memory is the real constraint (long context / many slots), not at short single-stream.</li>
-        <li><b>Choose weight quant by budget:</b> Q4_K_M if decode speed rules; Q6_K/Q8_0 if quality rules. Prefill barely cares about bit-width.</li>
-      </ul>
-      <p style="font-size:15px;color:var(--muted)">Caveat: 3 samples/point, first a cold outlier — the ~17% prefill spread is within noise, reinforcing "flat," not any real ordering.</p>
+      <p>These are <b>single-stream <code>llama-bench</code></b> micro-benchmarks (raw kernel throughput: <code>pp512</code> = prefill, <code>tg128</code> = decode; no HTTP, no sampling, no real prompts) &mdash; a different quantity from the server numbers above. Two opposite lessons: decode reads every weight once per token so <b>fewer bits = faster decode</b>; prefill is a big batched GEMM, so it is compute-bound and does not order by bit-width.</p>
     </div>
+    <figure class="chart">
+      <h4>Decode speed scales with weight size; prefill doesn't</h4>
+      <p class="sub">tg128 decode tok/s by weight quant. Q4_K_M is 2.18&times; BF16. Prefill pp512 stays ~5,500&ndash;6,500 across all &mdash; compute-bound, no monotonic ordering.</p>
+      <svg viewBox="0 0 880 330" role="img" aria-labelledby="tD-t tD-d" preserveAspectRatio="xMidYMid meet">
+<title id="tD-t">Single-stream decode throughput by weight quantization</title>
+<desc id="tD-d">Decode tokens per second falls monotonically as weight bits rise: Q4_K_M 168, Q5_K_M 155, Q6_K 133, Q8_0 125, BF16 77. Q4_K_M is 2.18 times BF16.</desc>
+<line class="grid" x1="50" y1="288.0" x2="864" y2="288.0"/>
+<text class="axlab" x="42" y="292.0" text-anchor="end">0</text>
+<line class="grid" x1="50" y1="220.5" x2="864" y2="220.5"/>
+<text class="axlab" x="42" y="224.5" text-anchor="end">45</text>
+<line class="grid" x1="50" y1="153.0" x2="864" y2="153.0"/>
+<text class="axlab" x="42" y="157.0" text-anchor="end">90</text>
+<line class="grid" x1="50" y1="85.5" x2="864" y2="85.5"/>
+<text class="axlab" x="42" y="89.5" text-anchor="end">135</text>
+<line class="grid" x1="50" y1="18.0" x2="864" y2="18.0"/>
+<text class="axlab" x="42" y="22.0" text-anchor="end">180</text>
+<rect class="f-gpu" x="82.6" y="36.0" width="97.7" height="252.0" rx="4"/>
+<text class="dotlab" x="131.4" y="29.0" text-anchor="middle">168</text>
+<text class="axlab" x="131.4" y="308" text-anchor="middle">Q4_K_M</text>
+<rect class="f-gpu f-soft" x="245.4" y="55.2" width="97.7" height="232.8" rx="4"/>
+<text class="dotlab" x="294.2" y="48.2" text-anchor="middle">155</text>
+<text class="axlab" x="294.2" y="308" text-anchor="middle">Q5_K_M</text>
+<rect class="f-gpu f-soft" x="408.2" y="88.0" width="97.7" height="200.0" rx="4"/>
+<text class="dotlab" x="457.0" y="81.0" text-anchor="middle">133</text>
+<text class="axlab" x="457.0" y="308" text-anchor="middle">Q6_K</text>
+<rect class="f-gpu f-soft" x="571.0" y="99.9" width="97.7" height="188.1" rx="4"/>
+<text class="dotlab" x="619.8" y="92.9" text-anchor="middle">125</text>
+<text class="axlab" x="619.8" y="308" text-anchor="middle">Q8_0</text>
+<rect class="f-cpu" x="733.8" y="172.5" width="97.7" height="115.5" rx="4"/>
+<text class="dotlab" x="782.6" y="165.5" text-anchor="middle">77</text>
+<text class="axlab" x="782.6" y="308" text-anchor="middle">BF16</text>
+<text class="axlab" x="6" y="14">tok/s</text>
+</svg>
+    </figure>
+    <div class="tbl-scroll"><table>
+      <caption>Weight quant &times; phase (f16 KV, flash-attention on). n=3/point, first a cold outlier &mdash; read prefill as "flat," not a fine ordering.</caption>
+      <thead><tr><th>Weight</th><th class="n">GGUF size</th><th class="n">Prefill pp512 (tok/s)</th><th class="n">Decode tg128 (tok/s)</th></tr></thead>
+      <tbody>
+        <tr class="peak"><td>Q4_K_M</td><td class="n">2.32 GiB</td><td class="n">5,901.5 &plusmn;799</td><td class="n">167.99</td></tr>
+        <tr><td>Q5_K_M</td><td class="n">2.69 GiB</td><td class="n">5,947.7 &plusmn;383</td><td class="n">155.15</td></tr>
+        <tr><td>Q6_K <span style="color:var(--muted)">(deployed)</span></td><td class="n">3.07 GiB</td><td class="n">5,534.2 &plusmn;294</td><td class="n">133.26</td></tr>
+        <tr><td>Q8_0</td><td class="n">3.98 GiB</td><td class="n">6,497.4 &plusmn;452</td><td class="n">125.37</td></tr>
+        <tr><td>BF16</td><td class="n">7.49 GiB</td><td class="n">6,222.6 &plusmn;793</td><td class="n">77.01</td></tr>
+      </tbody>
+    </table></div>
+    <div class="cols2">
+      <div class="card"><h3>Flash-attention: on, always</h3><p style="font-size:15px;margin:6px 0">Prefill uplift Q4 +15.6%, Q5 +18.9%, Q6 +16.7%, Q8 +21.0%, BF16 +16.7%; decode uplift smaller (Q4 +8.6%, Q6 +6.7%, BF16 +4.2%). Larger where the work is compute-heavy &mdash; effectively free here.</p></div>
+      <div class="card"><h3>KV dtype: a memory knob, barely a speed knob</h3><p style="font-size:15px;margin:6px 0"><code>q8_0</code> KV halves the KV footprint for ~3.7% decode / ~4.1% prefill loss (f16 128.62 &rarr; q8_0 123.90 tg128). <code>bf16</code> KV is same size as f16 but slightly slower &mdash; prefer f16. The memory win only pays off at long context / high batch.</p></div>
+    </div>
+
+    <h3>The accuracy&harr;speed tradeoff (measured)</h3>
+    <div class="col">
+      <p>Five runs of the <em>same merged model</em> at different GGUF precisions, scored on <b>all 583 disjoint 512-token chunks</b> of wikitext-2-raw using llama-perplexity's <b>default half-window scoring</b> (each chunk scores its second 256 tokens &mdash; <em>not</em> strided sliding-window; no <code>--ppl-stride</code>), paired with decode tok/s on the same A5000.</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Wikitext PPL (&plusmn;1&sigma; run-level uncertainty) vs decode speed. Each estimate carries ~&plusmn;0.076, larger than the gaps among the top three.</caption>
+      <thead><tr><th>Quant</th><th class="n">Wikitext PPL (&plusmn;1&sigma;)</th><th class="n">&Delta;PPL vs bf16</th><th class="n">decode tok/s</th><th class="n">speedup</th><th class="n">file size</th></tr></thead>
+      <tbody>
+        <tr><td>bf16</td><td class="n">9.9705 &plusmn;0.0765</td><td class="n">0 (reference)</td><td class="n">77.0</td><td class="n">1.00&times;</td><td class="n">7.49 GiB</td></tr>
+        <tr><td>Q8_0</td><td class="n">9.9691 &plusmn;0.0764</td><td class="n gpu">&minus;0.014%</td><td class="n">125.4</td><td class="n">1.63&times;</td><td class="n">3.98 GiB</td></tr>
+        <tr><td>Q6_K</td><td class="n">9.9695 &plusmn;0.0761</td><td class="n gpu">&minus;0.010%</td><td class="n">133.3</td><td class="n">1.73&times;</td><td class="n">3.07 GiB</td></tr>
+        <tr><td>Q5_K_M</td><td class="n">10.1205 &plusmn;0.0779</td><td class="n cpu">+1.50%</td><td class="n">155.2</td><td class="n">2.02&times;</td><td class="n">2.69 GiB</td></tr>
+        <tr><td>Q4_K_M</td><td class="n">10.2122 &plusmn;0.0780</td><td class="n cpu">+2.42%</td><td class="n gpu">168.0</td><td class="n">2.18&times;</td><td class="n">2.32 GiB</td></tr>
+      </tbody>
+    </table></div>
+    <div class="col">
+      <p><b>Speed rises monotonically as bits drop</b> (77 &rarr; 168 tok/s). PPL does not: point estimates are practically flat through Q6_K (bf16/Q8/Q6 within 0.014% of each other), then rise clearly at Q5 (+1.50%) and Q4 (+2.42%). Because every model scored identical text, a proper significance test would be a paired per-chunk loss-difference analysis, which <b>we did not compute</b> &mdash; so this is not a formal "within-noise" or "lossless" claim.</p>
+    </div>
+    <div class="callout void"><span class="lab">Before you quote these</span>This is <b>general-domain next-token likelihood on wikitext, not legal-task accuracy</b> &mdash; lower PPL here does not certify contract-intake quality. The bf16 GGUF is a same-precision reference (&Delta;PPL &equiv; 0 by definition), <b>not lossless ground truth</b> vs the original adapter model. "+2.42% PPL" is not "Q4 loses 2.4% quality" and says nothing about LoRA fidelity. The trustworthy claim is the <em>ordering</em> (Q4/Q5 worse than Q6/Q8/bf16). <b>q8_0 KV quality was not tested</b> &mdash; this sweep quantized weights only.</div>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§3</span><h2>Engine choice — llama.cpp vs vLLM vs SGLang (<a href="engines.html" style="color:var(--gpu)">measured</a>)</h2></div>
-    <div class="callout"><span class="lab">VOID → fixed</span>The first attempt was VOID — vLLM 0.25.1 (torch 2.11/triton 3.6 nightly) crashed at import, <b>0 requests</b>. Pinning a stable stack (<b>vLLM 0.11.0 / torch 2.8 / triton 3.4 / transformers 4.57</b>) fixed it. The comparison below is the real, fair one: <b>same merged 4B at matched bf16</b>, identical harness, ~240-token prompt / 256 generated, prefix-cache off, 0 failures (iso-precision, not iso-config — SGLang ran CUDA-graphs-off).</div>
-    <div class="col"><p>The finding matches the theory: <b>at one user they tie</b> (llama.cpp 61 ≈ vLLM 68 tok/s); as concurrency climbs, vLLM (PagedAttention) and SGLang (RadixAttention) scale near-linearly while <b>llama.cpp plateaus and goes host-bound</b>. By C=64, <b>vLLM and SGLang are ~4× llama.cpp</b>.</p></div>
+  <section id="context" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">6</span><h2>Long context flips the constraint from host scheduling to VRAM</h2></div>
+    <div class="col">
+      <p>Short-context serving (&sect;4&ndash;&sect;5) was <em>not</em> VRAM-bound. The moment you open the context window and keep sessions resident, capacity flips to <b>VRAM-bound</b>: how many bytes of KV cache you can hold. Two separate taxes &mdash; reserved window size sets what <em>fits</em>; actual KV depth sets how fast each token <em>decodes</em>.</p>
+      <div class="kpi">
+        <div class="c"><div class="n">3.07 <span class="u">GiB</span></div><div class="l">Q6_K weights (fixed)</div></div>
+        <div class="c"><div class="n gpu">144.25 <span class="u">KiB/tok</span></div><div class="l">f16 KV (measured from slope)</div></div>
+        <div class="c"><div class="n cpu">76.5 <span class="u">KiB/tok</span></div><div class="l">q8_0 KV = 53% of f16, not &frac12;</div></div>
+        <div class="c"><div class="n">24,564 <span class="u">MiB</span></div><div class="l">whole board</div></div>
+      </div>
+      <p>The f16 figure is measured: <code>(22226 &minus; 4916) MiB &divide; (30720 &times; 4 tok) = 144.25 KiB/token</code>. q8_0 lands at <b>53%</b> of f16 &mdash; 8-bit KV still carries per-block scale overhead, so there is no free doubling.</p>
+    </div>
     <div class="tbl-scroll"><table>
-      <caption>Aggregate output tok/s — bf16, merged Qwen3-4B, A5000. Best per row in teal.</caption>
-      <thead><tr><th>Concurrency</th><th class="n">llama.cpp</th><th class="n">SGLang</th><th class="n">vLLM</th></tr></thead>
+      <caption>Fit frontier &mdash; a <em>static server-boot allocation test</em> (KV does not <code>cudaMalloc</code>-OOM at boot; it does <b>not</b> promise acceptable latency). Brackets are coarse: the true ceiling sits inside each fit/OOM pair.</caption>
+      <thead><tr><th>Depth / slot</th><th class="n">f16 &mdash; fit</th><th class="n">f16 &mdash; OOM</th><th class="n">q8_0 &mdash; fit</th><th class="n">q8_0 &mdash; OOM</th></tr></thead>
+      <tbody>
+        <tr><td>8k</td><td class="n gpu">16 (22202 MiB)</td><td class="n">20</td><td class="n cpu">30 (23044 MiB)</td><td class="n">40</td></tr>
+        <tr><td>16k</td><td class="n gpu">8 (22210 MiB)</td><td class="n">12</td><td class="n">&mdash; (&lt;16)</td><td class="n bad">16</td></tr>
+        <tr><td>32k</td><td class="n gpu">4 (22226 MiB)</td><td class="n">6</td><td class="n">&mdash; (&lt;8)</td><td class="n bad">8</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl-scroll"><table>
+      <caption>Can I serve 30 or 100 users? &mdash; where <em>users = KV-resident dedicated slots held in VRAM at once</em>, not independently-arriving clients.</caption>
+      <thead><tr><th>Resident users</th><th>8k</th><th>16k</th><th>32k</th></tr></thead>
+      <tbody>
+        <tr><td>30</td><td class="gpu">only q8_0 KV (edge, 22.5 GB); f16 needs &le;4k</td><td class="bad">infeasible</td><td class="bad">infeasible</td></tr>
+        <tr><td>100</td><td class="bad">infeasible</td><td class="bad">infeasible</td><td class="bad">infeasible</td></tr>
+      </tbody>
+    </table></div>
+    <p class="col">This is the <b>exact opposite</b> of the short-chat finding, where tiny 768-token sessions let you pack C=64+ before the <em>host</em> became the bottleneck. Here each session is huge, so VRAM binds first &mdash; and it binds hard.</p>
+
+    <h3>Depth taxes every token</h3>
+    <div class="col">
+      <p>A slot count that "fits" can still be too slow. Independent of concurrency, deeper KV slows a <b>single stream</b> monotonically (single-sequence <code>llama-bench</code>, tg64 decode).</p>
+    </div>
+    <figure class="chart">
+      <h4>Decode speed versus KV-cache depth</h4>
+      <p class="sub">f16 loses ~47% by 32k (1.87&times;); q8_0's dequant-during-attention penalty <em>grows with depth</em> &mdash; 95% &rarr; 70% of f16 (2.54&times; d0&rarr;32k).</p>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="tE-t tE-d" preserveAspectRatio="xMidYMid meet">
+<title id="tE-t">Decode speed versus KV-cache depth for f16 and q8_0</title>
+<desc id="tE-d">Single-stream decode tokens per second falls with context depth. f16 goes 110 at empty to 59 at 32k; q8_0 goes 105 to 41, its penalty growing with depth.</desc>
+<line class="grid" x1="56" y1="258.0" x2="742" y2="258.0"/>
+<text class="axlab" x="48" y="262.0" text-anchor="end">0</text>
+<line class="grid" x1="56" y1="198.5" x2="742" y2="198.5"/>
+<text class="axlab" x="48" y="202.5" text-anchor="end">30</text>
+<line class="grid" x1="56" y1="139.0" x2="742" y2="139.0"/>
+<text class="axlab" x="48" y="143.0" text-anchor="end">60</text>
+<line class="grid" x1="56" y1="79.5" x2="742" y2="79.5"/>
+<text class="axlab" x="48" y="83.5" text-anchor="end">90</text>
+<line class="grid" x1="56" y1="20.0" x2="742" y2="20.0"/>
+<text class="axlab" x="48" y="24.0" text-anchor="end">120</text>
+<text class="axlab" x="56.0" y="278" text-anchor="middle">0</text>
+<text class="axlab" x="227.5" y="278" text-anchor="middle">8k</text>
+<text class="axlab" x="399.0" y="278" text-anchor="middle">16k</text>
+<text class="axlab" x="742.0" y="278" text-anchor="middle">32k</text>
+<text class="axlab" x="12" y="18">tok/s</text>
+<text class="axlab" x="742" y="292" text-anchor="end">KV depth (tokens)</text>
+<path class="ln-gpu" fill="none" d="M56.0 39.4 L227.5 81.5 L399.0 106.9 L742.0 141.0"/>
+<path class="ln-cpu ln-dash" fill="none" d="M56.0 50.3 L227.5 107.3 L742.0 176.3"/>
+<circle class="mk-gpu" cx="56.0" cy="39.4" r="3.6"/>
+<circle class="mk-gpu" cx="227.5" cy="81.5" r="3.6"/>
+<circle class="mk-gpu" cx="399.0" cy="106.9" r="3.6"/>
+<circle class="mk-gpu" cx="742.0" cy="141.0" r="3.6"/>
+<rect class="mk-cpu" x="53.0" y="47.3" width="6" height="6"/>
+<rect class="mk-cpu" x="224.5" y="104.3" width="6" height="6"/>
+<rect class="mk-cpu" x="739.0" y="173.3" width="6" height="6"/>
+</svg>
+      <div class="legend"><span><i class="gpu"></i>f16 KV</span><span><i class="cpu"></i>q8_0 KV</span></div>
+    </figure>
+    <div class="tbl-scroll"><table>
+      <caption>Single-sequence decode. q8_0 buys capacity but costs the most speed exactly where context is deepest.</caption>
+      <thead><tr><th>Depth</th><th class="n">f16 decode tok/s</th><th class="n">q8_0 decode tok/s</th><th class="n">q8_0 as % of f16</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td class="n gpu">110.2</td><td class="n">104.7</td><td class="n">94.9%</td></tr>
+        <tr><td>2k</td><td class="n">103.1</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+        <tr><td>8k</td><td class="n gpu">89.0</td><td class="n">76.0</td><td class="n">85.4%</td></tr>
+        <tr><td>16k</td><td class="n">76.2</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+        <tr><td>32k</td><td class="n gpu">59.0</td><td class="n cpu">41.2</td><td class="n bad">69.8%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="col fn">Prefill slows too, and the two "prefill" rates are not interchangeable: the marginal rate of adding a 512-token chunk on top of existing depth drops 2.84&times; (4604 &rarr; 1620 tok/s, empty &rarr; 32k), while average whole-prompt prefill from empty declines a gentler 1.84&times;.</p>
+
+    <h3>Depth &times; concurrency &mdash; and the flagship 30&times;8k result</h3>
+    <div class="tbl-scroll"><table>
+      <caption>Single-user scripted replay (model generates the replies) vs concurrent multi-turn (fully-backlogged, closed-loop).</caption>
+      <thead><tr><th>Config</th><th class="n">slots</th><th class="n">agg tok/s</th><th class="n">fair-share (agg/C)</th><th class="n">median per-req decode</th><th class="n">TTFT p50 / p95 / max</th><th class="n">turns ok</th></tr></thead>
+      <tbody>
+        <tr><td>8k server (single user)</td><td class="n">1</td><td class="n">80.9</td><td class="n">&mdash;</td><td class="n">103.5</td><td class="n">0.16 s</td><td class="n">&mdash;</td></tr>
+        <tr><td>16k server (single user)</td><td class="n">1</td><td class="n">59.2</td><td class="n">&mdash;</td><td class="n">88.2</td><td class="n">0.21 s</td><td class="n">&mdash;</td></tr>
+        <tr><td>32k server (single user, n=2 turns)</td><td class="n">1</td><td class="n">28.8</td><td class="n">&mdash;</td><td class="n">61.4</td><td class="n">~9.09 s</td><td class="n">&mdash;</td></tr>
+        <tr><td>30&times;8k, q8_0 KV (concurrent)</td><td class="n">30</td><td class="n">113.5</td><td class="n bad">3.78</td><td class="n bad">5.7</td><td class="n">0.45 / 53.7 / 62.7 s</td><td class="n">87/90</td></tr>
+        <tr><td>16&times;8k, f16 KV (concurrent)</td><td class="n">16</td><td class="n">135.0</td><td class="n gpu">8.44</td><td class="n">13.2</td><td class="n">0.26 / 25.5 / 29.4 s</td><td class="n">45/48</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout warn"><span class="lab">Read this carefully</span>q8_0 nearly doubled resident slots (16&rarr;30) at similar VRAM, but aggregate throughput barely moved (135&rarr;113) while <b>fair-share halved</b> &mdash; a pure latency-for-capacity trade. <b>"3.78" is fair-share (agg/30), not a measured per-request rate</b>; the measured median per-request decode was <b>5.7 tok/s</b>. The run was <b>not clean</b>: 3 of 90 follow-up turns grew past the 8192 window and were rejected &mdash; so this proves <em>memory</em> feasibility, not that every session stays in-window. The p95/max TTFT is a <em>zero-think-time closed loop</em>; it does not estimate open-loop production latency. The single-user "81 &rarr; 59 &rarr; 29 tok/s" headline is <b>end-to-end</b>: the 32k collapse is a prefill/TTFT event (steady decode was still 61.4 tok/s over a 2-turn session) &mdash; do not read 29 as a decode rate.</div>
+
+    <h3>Prefix caching flips the TTFT trend</h3>
+    <div class="col">
+      <p>With prefix caching <b>on</b>, deeper history <em>raises</em> the cache-hit rate and <em>lowers</em> TTFT; with it <b>off</b>, every turn reprocesses the whole prompt and TTFT climbs. Decode rate is untouched (~99.7&ndash;104.2 tok/s either way) &mdash; caching is purely a prefill/TTFT effect. Measured over 150 scripted-user turns replaying individual UltraChat conversations, server ctx 32768.</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>The trends genuinely <b>cross</b>: ON falls as history grows, OFF rises. Deep buckets have n=2 &mdash; indicative, not robust.</caption>
+      <thead><tr><th>Depth bucket</th><th class="n">cache ON &mdash; hit</th><th class="n">ON &mdash; TTFT median</th><th class="n">cache OFF &mdash; hit</th><th class="n">OFF &mdash; TTFT median</th></tr></thead>
+      <tbody>
+        <tr><td>0&ndash;1k</td><td class="n">0.322</td><td class="n gpu">136.9 ms</td><td class="n">0.0</td><td class="n">205.5 ms</td></tr>
+        <tr><td>1&ndash;2k</td><td class="n">0.746</td><td class="n gpu">109.9 ms</td><td class="n">0.0</td><td class="n">346.5 ms</td></tr>
+        <tr><td>2&ndash;4k</td><td class="n">0.949</td><td class="n gpu">74.7 ms</td><td class="n">0.0</td><td class="n cpu">505.2 ms (n=2)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="col">At 2&ndash;4k depth, prefix caching cuts TTFT <b>~6.8&times;</b> (505 &rarr; 75 ms). For any multi-turn deployment this is non-optional &mdash; turning it off makes conversations get slower the longer they run.</p>
+  </section>
+
+  <section id="engines" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">7</span><h2>Engine choice changes with concurrency and deployment priorities</h2></div>
+    <div class="callout void"><span class="lab">VOID &rarr; fixed (provenance)</span>The original E5 attempt was <b>VOID</b> &mdash; vLLM 0.25.1 (torch 2.11 / triton 3.6 nightly) died at import (a Triton JIT parse bug), serving 0 requests. It is now <b>resolved</b> by pinning a stable stack (<b>vLLM 0.11.0 / torch 2.8.0+cu128 / triton 3.4.0 / transformers 4.57.1</b>). The failure stays in the record; the comparison below is the real, fair one.</div>
+    <div class="col">
+      <p><b>The fair setup:</b> all three engines serve the <b>same merged Qwen3-4B at bf16</b> (llama.cpp reads the bf16 GGUF; vLLM/SGLang read bf16 safetensors) &mdash; <b>precision matched</b>. Identical closed-loop harness, ~240-token prompt / exactly 256 generated, temp 0, fixed seed, <b>prefix caching disabled on all three</b>, <b>fixed-server / vary-client</b> (booted once at up to 100 concurrent seqs; client concurrency swept 1&rarr;64), same A5000. 0 failures at every point.</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Aggregate output tok/s &mdash; bf16, merged Qwen3-4B, A5000. Best per row in teal.</caption>
+      <thead><tr><th>Concurrency</th><th class="n">llama.cpp bf16</th><th class="n">SGLang bf16</th><th class="n">vLLM bf16</th></tr></thead>
       <tbody>
         <tr><td>1</td><td class="n gpu">61.3</td><td class="n">34.7</td><td class="n gpu">67.9</td></tr>
+        <tr><td>8</td><td class="n">382.2</td><td class="n">258.1</td><td class="n gpu">478.7</td></tr>
         <tr><td>16</td><td class="n">381.5</td><td class="n">499.7</td><td class="n gpu">853.3</td></tr>
         <tr><td>32</td><td class="n">268.1</td><td class="n">900.7</td><td class="n gpu">1297.0</td></tr>
-        <tr><td>64</td><td class="n">421.2</td><td class="n">1647.3</td><td class="n gpu">1762.7</td></tr>
+        <tr><td>64</td><td class="n bad">421.2</td><td class="n">1647.3</td><td class="n gpu">1762.7</td></tr>
         <tr><td>TTFT p50 @ C=64</td><td class="n">0.98 s</td><td class="n">1.06 s</td><td class="n gpu">0.60 s</td></tr>
+        <tr><td>TTFT p99 @ C=64</td><td class="n">3.78 s</td><td class="n gpu">1.85 s</td><td class="n">2.23 s</td></tr>
       </tbody>
     </table></div>
-    <div class="col"><p style="font-size:15px;color:var(--muted)">Caveat: bf16 on all three (not each engine's optimal quant), prefix-cache off — no "inherently fastest" claim. llama.cpp still wins on setup simplicity, low-concurrency, and CPU/mixed reach. Full detail + tradeoffs on the <a href="engines.html">Engines page</a>; the new 9B/E2B models are on <a href="models.html">Model choice</a>.</p></div>
+    <div class="col">
+      <p><b>At C=1 llama.cpp and vLLM tie</b> (61 &asymp; 68) while SGLang is ~half (35 &mdash; its scheduler overhead only pays off under load). As concurrency rises, vLLM (PagedAttention) and SGLang (RadixAttention) pull away hard: by <b>C=64 vLLM (1763) and SGLang (1647) are ~4&times; llama.cpp (421)</b>, whose curve goes flat/noisy (382&rarr;381&rarr;268&rarr;421) &mdash; consistent with the &sect;4 host-side wall (not re-proven here: server-CPU telemetry was not re-captured). vLLM holds the best TTFT p50 under load; SGLang the best p99.</p>
+    </div>
+    <div class="cols2">
+      <div class="card"><h3>Use vLLM / SGLang when&hellip;</h3><ul class="clean" style="font-size:15px">
+        <li>many concurrent users on a GPU under latency SLAs</li>
+        <li>you want PagedAttention / RadixAttention + native continuous batching + prefix caching + speculative decoding</li>
+        <li>native multi-LoRA serving (many adapters, one base)</li>
+      </ul></div>
+      <div class="card"><h3>Use llama.cpp when&hellip;</h3><ul class="clean" style="font-size:15px">
+        <li>single-user desktop / edge / offline, competitive at low concurrency</li>
+        <li>a quick prototype or model-swapping via GGUF, widest quant/hardware reach</li>
+        <li>CPU or mixed hardware, trivial deployment (one static binary)</li>
+      </ul></div>
+    </div>
+    <div class="callout warn"><span class="lab">Keep attached</span><b>bf16 on all three</b> &mdash; not each engine's optimal config (llama.cpp's low-bit GGUF and vLLM's AWQ/FP8 paths would each shift their own curves). <b>Prefix caching off</b> (understates SGLang/vLLM). <b>Iso-precision, not iso-configuration:</b> SGLang ran with CUDA graphs disabled for startup robustness while vLLM used them &mdash; so SGLang is somewhat handicapped here. One 4B model, one workload. <b>No engine is "inherently" fastest.</b> For external context, a <a href="https://developers.redhat.com/articles/2026/06/15/llamacpp-vs-vllm-choosing-right-local-llm-inference-engine">Red&nbsp;Hat test</a> cites ~44&times; for vLLM &mdash; but on Llama-3.1-8B full-precision / single H200, a very different config the source itself calls workload-specific. Multi-turn KV reuse systems such as <a href="https://arxiv.org/abs/2606.16135">SwiftCache</a> report up to &minus;69% P99 TTFT vs vLLM/SGLang KV-cache baselines; production levers (speculative decoding, chunked prefill, prefix caching, disaggregated prefill/decode) live mostly in vLLM/SGLang, and typically move TTFT and effective concurrency more than picking a faster quant (see <a href="https://vllm.ai/blog/2025-09-05-anatomy-of-vllm">Inside vLLM</a>).</div>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§4</span><h2>Is a LoRA "just a matmul"? The SVD-extraction probe</h2></div>
+  <section id="locust" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">8</span><h2>Finite-user load is more traffic-like, but still closed-loop</h2></div>
     <div class="col">
-      <p>Mechanically, yes: a merged LoRA is <code>W + (α/r)·B·A</code> — base weights plus a low-rank matmul. The tempting leap is <em>"so I can subtract any two checkpoints, SVD the difference, and recover the LoRA that made it."</em> The study tests exactly that, with a <b>control</b> (a delta we <em>know</em> is a rank-16 LoRA) and a <b>treatment</b> (the delta between two published checkpoints).</p>
+      <p>Studies E2/E3 use <b>Locust with a finite pool of users and think-time</b>. More traffic-like than the barrier sweep, but <b>not real traffic</b>: still closed-loop, and offered load is throttled by the pool (E2 u20 = 2.07 req/s, u60 = 2.89 req/s), not pushed to saturation. <b>Never</b> compare these tok/s head-to-head with the &sect;4 saturation numbers &mdash; they measure different regimes. Both experiments: 0 failures.</p>
     </div>
     <div class="tbl-scroll"><table>
-      <caption>SVD of the weight delta, 252 target-linear matrices.</caption>
-      <thead><tr><th>Metric</th><th class="n">Control: known r=16 LoRA</th><th class="n">Instruct−Base (inter-checkpoint)</th></tr></thead>
+      <caption>E2 ShortChatUser (server <code>-np 64</code>, 768 tok/slot, ~17-tok prompts) &mdash; steady-state.</caption>
+      <thead><tr><th>Users</th><th class="n">Steady tok/s</th><th class="n">tok/min</th><th class="n">comp tok/req</th><th class="n">reqs (win)</th><th class="n">TTFT p50/p95 (ms)</th><th class="n">e2e p50/p95 (ms)</th><th class="n">req/s</th></tr></thead>
       <tbody>
-        <tr><td>mean effective rank (/2560)</td><td class="n">42.8</td><td class="n">1,507</td></tr>
-        <tr><td>‖ΔW‖ / ‖W‖</td><td class="n">~0.2%</td><td class="n">~17%</td></tr>
-        <tr class="peak"><td>rank-16 SVD retained energy</td><td class="n">74.2%</td><td class="n">3.55%</td></tr>
-        <tr><td>embed_tokens delta</td><td class="n">0.0</td><td class="n">~20.4%</td></tr>
-        <tr><td>rank-16 retained: attn / mlp</td><td class="n">74 / 74%</td><td class="n">5.4 / 2.8%</td></tr>
+        <tr><td>u20</td><td class="n">292.6</td><td class="n">17,558</td><td class="n">140.5</td><td class="n">250</td><td class="n">109 / 152</td><td class="n">7,874 / 8,853</td><td class="n">2.07</td></tr>
+        <tr><td>u60</td><td class="n">412.3</td><td class="n">24,736</td><td class="n">142.2</td><td class="n">348</td><td class="n">230 / 316</td><td class="n">20,143 / 22,306</td><td class="n">2.89</td></tr>
       </tbody>
     </table></div>
-    <div class="callout"><span class="lab">Read this framing, don't skip it</span>
-      <ul class="clean" style="margin:4px 0">
-        <li>It is an <b>inter-checkpoint delta, not a proven full fine-tune</b> — Instruct-2507 declares no base model.</li>
-        <li>Any rank-r SVD is <b>"LoRA-representable," never "a working extracted LoRA"</b> — no task behavior was trained or validated.</li>
-        <li>The high-rank result <b>does not refute "LoRA can match full fine-tuning"</b> (cf. Thinking Machines, <em>LoRA Without Regret</em>): a <em>trained</em> low-rank adapter stores task information, not the full weight delta — orthogonal to this measurement.</li>
-      </ul>
-      <b>Takeaway:</b> "merged LoRA = base + low-rank matmul" is true; "so I can SVD any diff back into a LoRA" is false in general — the real between-checkpoint delta is high-rank, embedding-shifting, and MLP-heavy.</div>
-  </section>
-
-  <section>
-    <div class="sec-head"><span class="idx">§5</span><h2>Synthetic finite-user load (Locust) — closed-loop, not real traffic</h2></div>
-    <div class="col"><p>More traffic-like than the barrier sweep, but <b>not real traffic</b>: a finite pool of users with think-time between requests. Still <b>closed-loop</b> — user count is an <em>upper bound</em> on in-flight concurrency, and offered load is throttled by the pool, not pushed to saturation. <b>Never</b> compare these tok/s with the §1 saturation numbers; they measure different worlds.</p></div>
+    <p class="col">More users &rarr; more aggregate tok/s (292.6 &rarr; 412.3). e2e balloons 7.9&nbsp;s &rarr; 20.1&nbsp;s (2.6&times;) &mdash; and since 60 users &lt; 64 slots, that is <b>not queueing</b> but per-slot decode collapse under heavier batching (effective per-request rate falls ~17.8 &rarr; ~7.1 tok/s). Expected batched-inference physics.</p>
     <div class="tbl-scroll"><table>
-      <caption>E2 short-chat (fixed 64 slots) and E3 multi-turn growing context (20 slots, 4096-tok).</caption>
-      <thead><tr><th>Run</th><th class="n">Steady tok/s</th><th class="n">TTFT p50 (ms)</th><th class="n">e2e p50 (s)</th><th class="n">Note</th></tr></thead>
+      <caption>E3 ConversationUser (server <code>-np 20</code>, 4096 tok/slot, 8 growing turns) &mdash; steady-state u20. Prefix cache deliberately <b>off</b>.</caption>
+      <thead><tr><th>Level</th><th class="n">Steady tok/s</th><th class="n">comp tok/req</th><th class="n">prompt tok/req</th><th class="n">prefill:decode</th><th class="n">TTFT p50/p95 (ms)</th><th class="n">e2e p50/p95 (ms)</th></tr></thead>
       <tbody>
-        <tr><td>E2 · 20 users</td><td class="n">292.6</td><td class="n">109</td><td class="n">7.9</td><td>think-time throttled</td></tr>
-        <tr><td>E2 · 60 users</td><td class="n">412.3</td><td class="n">230</td><td class="n">20.1</td><td>per-slot decode collapse (60&lt;64 slots, not queueing)</td></tr>
-        <tr><td>E3 · 20 users · 8 turns</td><td class="n">205.9</td><td class="n">247</td><td class="n">10.2</td><td>4.3 : 1 prefill : decode</td></tr>
+        <tr><td>u20 &middot; 8 turns</td><td class="n">205.9</td><td class="n">133.3</td><td class="n">578.8</td><td class="n">4.34 : 1</td><td class="n">247 / 465</td><td class="n">10,231 / 11,791</td></tr>
       </tbody>
     </table></div>
-    <div class="col"><p><b>The E3 teaching case:</b> re-prefilling the whole growing history every turn produces a scary 4.3 : 1 prefill : decode <em>token</em> ratio — but prefill runs ~3,100 tok/s overall (up to ~4,200 at the longest turns) while decode runs ~13 tok/s effective, so the "tax" costs only ~40 → ~300 ms of TTFT and <b>barely moves the ~10 s decode-dominated latency</b>. Always ask: expensive in what units, and is that the bottleneck?</p></div>
+    <div class="callout"><span class="lab">The teaching case &mdash; expensive in tokens, cheap in seconds</span>Re-prefilling the whole growing history every turn produces a scary <b>4.3 : 1 prefill : decode token ratio</b>. But prefill runs ~3,100 tok/s overall (up to ~4,200 at the longest turns) while decode runs ~13 tok/s effective, so the tax costs only <b>~40 &rarr; ~300 ms of TTFT</b> and barely moves the ~10&nbsp;s decode-dominated e2e. Always ask: expensive in what units, and is that unit the bottleneck? <span style="color:var(--muted)">(Per-turn TTFT was not recorded client-side; the ~40&rarr;300 ms growth is derived from server prefill times as a proxy. E3's 205.9 tok/s is lower than E2's, but the runs differ in slots, context, think-time, prompt shape and output length &mdash; not attributable to prefill alone.)</span></div>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§6</span><h2>Nuances — what a real chatbot needs, and llama.cpp vs vLLM</h2></div>
+  <section id="models" data-grp="Single GPU">
+    <div class="sec-head"><span class="idx">9</span><h2>Model architecture predicts serving footprint better than parameter count</h2></div>
     <div class="col">
-      <p>Everything above measured raw serving capacity on <em>one</em> engine. A production chatbot cares about different things. This section is grounded in the 2025–2026 literature (cited), not our own measurement.</p>
-      <ul class="clean">
-        <li><b>Prefix caching is the #1 chatbot lever.</b> Real chats are multi-turn: the system prompt + history is a huge <em>shared prefix</em>, each new turn a tiny suffix. With prefix caching (automatic in <a href="https://vllm.ai/blog/2025-09-05-anatomy-of-vllm">vLLM</a>/SGLang) only the uncached suffix is prefilled. Our E3 deliberately disabled it; our <a href="context.html">§9 chatbot A/B</a> then <b>measured it directly</b> — at 2–4k depth prefix caching cut TTFT <b>~6.8×</b> (505→75 ms), and the trends <em>cross</em> (ON falls with depth, OFF rises). For scale, one multi-turn KV-reuse system cuts P99 TTFT up to <b>−69% vs vLLM/SGLang KV-cache baselines</b> (<a href="https://arxiv.org/abs/2606.16135">SwiftCache</a>).</li>
-        <li><b>TTFT &amp; TPOT beat aggregate throughput for UX.</b> At our peak (C=64) aggregate tok/s is maximal but each user waits ~20 s. The production metric is <b>goodput</b> (requests meeting a latency SLO), not raw throughput.</li>
-        <li><b>llama.cpp vs vLLM vs SGLang — now measured on this rig (<a href="engines.html">Engines</a>).</b> At matched bf16 (4B, A5000), <b>C=1 is a tie</b> (llama.cpp 61 ≈ vLLM 68 tok/s); by <b>C=64, vLLM (1763) and SGLang (1647) are ~4× llama.cpp (421)</b> — their PagedAttention/RadixAttention scale where llama.cpp goes host-bound. vLLM holds the best TTFT under load. For context, a <a href="https://developers.redhat.com/articles/2026/06/15/llamacpp-vs-vllm-choosing-right-local-llm-inference-engine">Red&nbsp;Hat test</a> cites ~44× on Llama-3.1-8B/H200 (a very different config). <b>Caveat:</b> bf16 (not each engine's optimal quant), prefix-cache off — so no "inherently fastest" claim.</li>
-        <li><b>Speed vs accuracy — now measured (<a href="context.html">Context &amp; accuracy</a>).</b> A full-test wikitext perplexity sweep of the <em>same merged model</em> shows <b>Q6_K and Q8_0 practically indistinguishable from bf16</b> (≤0.014% PPL, each carrying its own ~±0.076 run-level uncertainty; no paired significance test computed) and <b>Q4_K_M at +2.42% PPL for 2.18× decode</b>. But that's general-domain next-token likelihood, <b>not legal-task accuracy</b>, and the bf16 GGUF is a same-precision reference, not lossless ground truth — so "validate on your task" still stands. At 4-bit the <a href="https://arxiv.org/abs/2306.00978">AWQ paper</a> reports AWQ often matches/beats GPTQ in its settings (~1.45× kernel speedup). FP8: the A5000 lacks native FP8 W8A8 acceleration (needs Ada/Hopper), though Ampere runs FP8 weight-only via Marlin.</li>
-        <li><b>2025–26 levers that matter more than kernel speed:</b> speculative decoding, chunked prefill, prefix caching, and <a href="https://docs.vllm.ai/en/latest/features/disagg_prefill/">disaggregated prefill/decode</a> — mostly mature in vLLM/SGLang; llama.cpp has speculative decoding + slot prompt-cache, not the full suite.</li>
-      </ul>
-      <div class="callout"><b>Bottom line for a chatbot:</b> our numbers are the <b>floor</b> — one engine, no prefix cache, no speculative decoding. On the right engine with prefix caching on, a multi-turn chatbot has far lower TTFT under load and higher usable concurrency. <b>Production multi-user chatbot → vLLM/SGLang; single-user, edge, prototype, or CPU/mixed → llama.cpp.</b></div>
+      <p>On the same A5000, at a matched 4-bit tier, how do a bigger model (Qwen3.5-9B) and a smaller efficiency model (Gemma-4-E2B) compare to our 4B? The punchline: <b>serving footprint tracks attention geometry, not parameter count</b> &mdash; the bigger model can need less VRAM.</p>
+    </div>
+    <div class="callout warn"><span class="lab">Read the fairness rules first</span><b>Matched <em>nominal</em> Q4_K_M tier, NOT iso-precision.</b> Identical <code>llama-quantize &hellip; Q4_K_M</code> commands produced <b>different bits-per-weight</b> (Qwen3-4B 4.97, Qwen3.5-9B 5.03, <b>Gemma-4-E2B 5.90</b> &mdash; llama.cpp keeps more of Gemma's tensors at F32/Q6_K), so Gemma's "Q4_K_M" is the <em>densest</em> of the three. <b>Speed &amp; footprint only, not quality</b> (different tokenizers &rarr; tok/s is not equal work; no cross-model perplexity). <b>Text-only</b> (both new models are multimodal). Qwen3.5-9B is <b>dense</b>, not MoE. TTFT was captured only for the 4B. All runs are <b>llama.cpp only</b> &mdash; vLLM 0.11.0 predates <code>qwen35</code>/<code>gemma4</code>.</div>
+    <div class="tbl-scroll"><table>
+      <caption>Single-stream <code>llama-bench</code>, Q4_K_M. Decode does not track parameter count (Gemma's GGUF is larger than the 4B, yet decodes faster).</caption>
+      <thead><tr><th>Model</th><th class="n">GGUF params (text)</th><th class="n">bits/weight</th><th class="n">Prefill pp512 (tok/s)</th><th class="n">Decode tg128 (tok/s)</th></tr></thead>
+      <tbody>
+        <tr><td>Gemma-4-E2B</td><td class="n">4.65B</td><td class="n cpu">5.90</td><td class="n gpu">7080</td><td class="n gpu">160.5</td></tr>
+        <tr><td>Qwen3-4B (ours)</td><td class="n">4.02B</td><td class="n">4.97</td><td class="n">6085</td><td class="n">146.7</td></tr>
+        <tr><td>Qwen3.5-9B</td><td class="n">8.95B</td><td class="n">5.03</td><td class="n cpu">2834</td><td class="n cpu">82.3</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tbl-scroll"><table>
+      <caption>Measured static VRAM with a 64-slot server (weights + all KV/state) &mdash; the ground truth &mdash; plus attention design from GGUF metadata.</caption>
+      <thead><tr><th>Model</th><th class="n">Weights (Q4_K_M)</th><th class="n">Static VRAM @ 64 slots &times;1k ctx</th><th>Attention design</th></tr></thead>
+      <tbody>
+        <tr><td>Gemma-4-E2B</td><td class="n">3.43 GB</td><td class="n gpu">3,224 MiB (3.15 GiB)</td><td>sliding-window 512 + 20 shared-KV layers, MQA</td></tr>
+        <tr><td>Qwen3.5-9B</td><td class="n">5.63 GB</td><td class="n">10,942 MiB (10.69 GiB)</td><td><b>hybrid</b>: full attn every 4th layer (8/32) + 24 SSM/recurrent</td></tr>
+        <tr><td>Qwen3-4B</td><td class="n">2.50 GB</td><td class="n cpu">12,208 MiB (11.92 GiB)</td><td>uniform GQA &rarr; 144 KiB/token</td></tr>
+      </tbody>
+    </table></div>
+    <figure class="chart">
+      <h4>Aggregate throughput vs concurrency, Q4_K_M, fixed 64-slot server</h4>
+      <p class="sub">Gemma &asymp; the 4B; Qwen3.5-9B runs at ~45&ndash;50% of their throughput throughout. 0 failures, ~256-tok generations.</p>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="tF-t tF-d" preserveAspectRatio="xMidYMid meet">
+<title id="tF-t">Aggregate throughput versus concurrency for three models at Q4_K_M</title>
+<desc id="tF-d">Gemma-4-E2B and Qwen3-4B track closely, reaching about 650 and 639 tok/s at C=64. Qwen3.5-9B runs at roughly half, 302 tok/s at C=64.</desc>
+<line class="grid" x1="56" y1="260.0" x2="744" y2="260.0"/>
+<text class="axlab" x="48" y="264.0" text-anchor="end">0</text>
+<line class="grid" x1="56" y1="199.5" x2="744" y2="199.5"/>
+<text class="axlab" x="48" y="203.5" text-anchor="end">175</text>
+<line class="grid" x1="56" y1="139.0" x2="744" y2="139.0"/>
+<text class="axlab" x="48" y="143.0" text-anchor="end">350</text>
+<line class="grid" x1="56" y1="78.5" x2="744" y2="78.5"/>
+<text class="axlab" x="48" y="82.5" text-anchor="end">525</text>
+<line class="grid" x1="56" y1="18.0" x2="744" y2="18.0"/>
+<text class="axlab" x="48" y="22.0" text-anchor="end">700</text>
+<text class="axlab" x="56.0" y="280" text-anchor="middle">C=1</text>
+<text class="axlab" x="228.0" y="280" text-anchor="middle">C=8</text>
+<text class="axlab" x="400.0" y="280" text-anchor="middle">C=16</text>
+<text class="axlab" x="572.0" y="280" text-anchor="middle">C=32</text>
+<text class="axlab" x="744.0" y="280" text-anchor="middle">C=64</text>
+<text class="axlab" x="8" y="16">tok/s</text>
+<path class="ln-gpu" fill="none" d="M56.0 204.3 L228.0 135.2 L400.0 74.4 L572.0 66.4 L744.0 35.3"/>
+<circle class="mk-gpu" cx="56.0" cy="204.3" r="3.6"/>
+<circle class="mk-gpu" cx="228.0" cy="135.2" r="3.6"/>
+<circle class="mk-gpu" cx="400.0" cy="74.4" r="3.6"/>
+<circle class="mk-gpu" cx="572.0" cy="66.4" r="3.6"/>
+<circle class="mk-gpu" cx="744.0" cy="35.3" r="3.6"/>
+<path class="ln-tp ln-dash" fill="none" d="M56.0 216.1 L228.0 156.6 L400.0 75.7 L572.0 63.6 L744.0 39.1"/>
+<rect class="mk-tp" x="53.0" y="213.1" width="6" height="6"/>
+<rect class="mk-tp" x="225.0" y="153.6" width="6" height="6"/>
+<rect class="mk-tp" x="397.0" y="72.7" width="6" height="6"/>
+<rect class="mk-tp" x="569.0" y="60.6" width="6" height="6"/>
+<rect class="mk-tp" x="741.0" y="36.1" width="6" height="6"/>
+<path class="ln-cpu ln-dot" fill="none" d="M56.0 235.1 L228.0 206.8 L400.0 170.5 L572.0 167.3 L744.0 155.6"/>
+<path class="mk-cpu" d="M56.0 231.5 L59.4 237.9 L52.6 237.9 Z"/>
+<path class="mk-cpu" d="M228.0 203.2 L231.4 209.6 L224.6 209.6 Z"/>
+<path class="mk-cpu" d="M400.0 166.9 L403.4 173.3 L396.6 173.3 Z"/>
+<path class="mk-cpu" d="M572.0 163.7 L575.4 170.1 L568.6 170.1 Z"/>
+<path class="mk-cpu" d="M744.0 152.0 L747.4 158.4 L740.6 158.4 Z"/>
+</svg>
+      <div class="legend"><span><i class="gpu"></i>Gemma-4-E2B</span><span><i class="tp"></i>Qwen3-4B</span><span><i class="cpu"></i>Qwen3.5-9B</span></div>
+    </figure>
+    <div class="tbl-scroll"><table>
+      <caption>Aggregate tok/s (still climbing at C=64).</caption>
+      <thead><tr><th>C</th><th class="n">Gemma-4-E2B</th><th class="n">Qwen3-4B</th><th class="n">Qwen3.5-9B</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td class="n gpu">161</td><td class="n tp">127</td><td class="n cpu">72</td></tr>
+        <tr><td>8</td><td class="n gpu">361</td><td class="n tp">299</td><td class="n cpu">154</td></tr>
+        <tr><td>16</td><td class="n gpu">537</td><td class="n tp">533</td><td class="n cpu">259</td></tr>
+        <tr><td>32</td><td class="n">560</td><td class="n gpu">568</td><td class="n cpu">268</td></tr>
+        <tr><td>64</td><td class="n gpu">650</td><td class="n tp">639</td><td class="n cpu">302</td></tr>
+      </tbody>
+    </table></div>
+    <p class="col">The counterintuitive result: the <b>8.95B-text Qwen3.5-9B uses <em>less</em> VRAM at 64 slots than our 4B</b> (10.69 vs 11.92 GiB) &mdash; not from GQA but from a hybrid design where only 8 of 32 layers do full attention and the rest are SSM/recurrent (fixed per-sequence state, not per-token KV). <b>Gemma is leanest</b> (3.15 GiB): mostly sliding-window attention with KV shared across 20 layers + MQA. Parameter count did not predict VRAM here; modern KV-saving architectures did.</p>
+  </section>
+
+  <!-- ==================== MULTI GPU ==================== -->
+  <section id="topology" data-grp="Multi GPU">
+    <div class="sec-head"><span class="idx">10</span><h2>Scaling beyond one card: this is a heterogeneous SYS topology</h2></div>
+    <div class="col">
+      <p>The multi-GPU material is a second act, not an appendix &mdash; it materially changes the deployment recommendation. One host, two <em>different</em> cards on a slow interconnect. <code>nvidia-smi topo -m</code> = <code>SYS</code>: the cards communicate over PCIe + the cross-NUMA CPU interconnect (UPI). There is <b>no NVLink</b>. GPU0 sits on NUMA node 0, GPU1 on node 1; every run pins <code>CUDA_DEVICE_ORDER=PCI_BUS_ID</code> + a per-server <code>CUDA_VISIBLE_DEVICES</code>, and telemetry samples each physical card.</p>
+    </div>
+    <figure class="chart">
+      <h4>Heterogeneous two-GPU topology &mdash; no NVLink, cross-NUMA PCIe</h4>
+      <p class="sub">The two cards reach each other only over PCIe Gen3 + the CPU UPI link between NUMA nodes.</p>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="tT-t tT-d" preserveAspectRatio="xMidYMid meet">
+<title id="tT-t">Heterogeneous two-GPU topology: no NVLink, cross-NUMA PCIe</title>
+<desc id="tT-d">GPU0 is an RTX A5000 24GB on NUMA node 0; GPU1 is an RTX A6000 48GB on NUMA node 1. Each attaches to its NUMA CPU by PCIe gen3 x16. The two NUMA nodes connect over the CPU UPI interconnect. There is no NVLink between the GPUs; nvidia-smi reports SYS.</desc>
+<rect class="topo-numa" x="30" y="60" width="320" height="180" rx="12"/>
+<rect class="topo-numa" x="410" y="60" width="320" height="180" rx="12"/>
+<text class="topo-lab" x="46" y="82">NUMA node 0</text>
+<text class="topo-lab" x="426" y="82">NUMA node 1</text>
+<rect class="topo-cpu" x="150" y="96" width="120" height="40" rx="7"/>
+<text class="topo-t" x="210" y="121" text-anchor="middle">CPU 0</text>
+<rect class="topo-cpu" x="490" y="96" width="120" height="40" rx="7"/>
+<text class="topo-t" x="550" y="121" text-anchor="middle">CPU 1</text>
+<rect class="topo-gpu5" x="70" y="165" width="240" height="56" rx="9"/>
+<text class="topo-t" x="190" y="188" text-anchor="middle" font-weight="700">GPU0 &#183; RTX A5000</text>
+<text class="topo-sub" x="190" y="207" text-anchor="middle">24,564 MiB &#183; 230 W &#183; 8192 cores</text>
+<rect class="topo-gpu6" x="450" y="165" width="240" height="56" rx="9"/>
+<text class="topo-t" x="570" y="188" text-anchor="middle" font-weight="700">GPU1 &#183; RTX A6000</text>
+<text class="topo-sub" x="570" y="207" text-anchor="middle">49,140 MiB &#183; 300 W &#183; 10,752 cores</text>
+<line class="topo-pcie" x1="210" y1="136" x2="190" y2="165"/>
+<line class="topo-pcie" x1="550" y1="136" x2="570" y2="165"/>
+<text class="topo-edge" x="150" y="156" text-anchor="middle">PCIe g3 x16</text>
+<text class="topo-edge" x="610" y="156" text-anchor="middle">PCIe g3 x16</text>
+<line class="topo-upi" x1="270" y1="116" x2="490" y2="116"/>
+<text class="topo-edge" x="380" y="108" text-anchor="middle">CPU UPI (cross-NUMA)</text>
+<line class="topo-nolink" x1="310" y1="193" x2="450" y2="193"/>
+<text class="topo-nolab" x="380" y="186" text-anchor="middle">&#10005; no NVLink</text>
+<text class="topo-nolab" x="380" y="238" text-anchor="middle">nvidia-smi topo &#8594; SYS</text>
+</svg>
+    </figure>
+    <div class="callout tp"><span class="lab">The two design axes</span><b>Tensor-parallel (TP)</b> shards one model across both cards, exchanging activations every layer over PCIe. <b>Data-parallel (DP)</b> here runs <b>two independent full replicas</b> (one per card) behind a client-side <b>join-shortest-queue</b> router &mdash; <em>not</em> vLLM <code>--data-parallel-size 2</code>, which locksteps the fast card to the slow one on a no-NVLink pair (DP ranks all-reduce an "any-unfinished" flag and size KV uniformly). Two independent replicas let the A6000 profile its own larger KV cache and pull more load.</div>
+  </section>
+
+  <section id="single-cards" data-grp="Multi GPU">
+    <div class="sec-head"><span class="idx">11</span><h2>The A6000 wins compute-heavy work &mdash; but cooling changes decode results</h2></div>
+    <div class="col">
+      <p>These single-card baselines are the ceilings every 2-GPU number is judged against. Same ~768 GB/s bandwidth, so <b>decode is expected to be close</b>; the A6000's extra cores should help prefill and high-concurrency batched decode.</p>
+    </div>
+    <figure class="chart">
+      <h4>A6000 &divide; A5000 single-card throughput ratio, by shape (vLLM bf16)</h4>
+      <p class="sub">Prefill favors the A6000 and the win grows with load. Decode dips <em>below</em> 1.0 at low-mid concurrency &mdash; the A6000 thermally throttles.</p>
+      <svg viewBox="0 0 760 300" role="img" aria-labelledby="tG-t tG-d" preserveAspectRatio="xMidYMid meet">
+<title id="tG-t">A6000 over A5000 single-card throughput ratio by shape</title>
+<desc id="tG-d">Ratio of A6000 to A5000 aggregate throughput. Prefill favors the A6000 and grows to 1.28x. Balanced is near 1.0 rising to 1.13x. Decode dips below 1.0 at low concurrency (0.89 to 0.92x) due to A6000 thermal throttling, crossing above 1.0 only at C=32 and up.</desc>
+<line class="grid" x1="54" y1="258.0" x2="744" y2="258.0"/>
+<text class="axlab" x="46" y="262.0" text-anchor="end">0.8&#215;</text>
+<line class="grid" x1="54" y1="214.7" x2="744" y2="214.7"/>
+<text class="axlab" x="46" y="218.7" text-anchor="end">0.9&#215;</text>
+<line class="ln-ref" x1="54" y1="171.5" x2="744" y2="171.5"/>
+<text class="axlab" x="46" y="175.5" text-anchor="end">1.0&#215;</text>
+<line class="grid" x1="54" y1="128.2" x2="744" y2="128.2"/>
+<text class="axlab" x="46" y="132.2" text-anchor="end">1.1&#215;</text>
+<line class="grid" x1="54" y1="84.9" x2="744" y2="84.9"/>
+<text class="axlab" x="46" y="88.9" text-anchor="end">1.2&#215;</text>
+<line class="grid" x1="54" y1="41.6" x2="744" y2="41.6"/>
+<text class="axlab" x="46" y="45.6" text-anchor="end">1.3&#215;</text>
+<text class="axlab" x="54.0" y="278" text-anchor="middle">1</text>
+<text class="axlab" x="284.0" y="278" text-anchor="middle">4</text>
+<text class="axlab" x="399.0" y="278" text-anchor="middle">8</text>
+<text class="axlab" x="514.0" y="278" text-anchor="middle">16</text>
+<text class="axlab" x="629.0" y="278" text-anchor="middle">32</text>
+<text class="axlab" x="744.0" y="278" text-anchor="middle">64</text>
+<text class="axlab" x="54" y="16" text-anchor="start">A6000 / A5000</text>
+<text class="axlab" x="744" y="292" text-anchor="end">concurrency C (log)</text>
+<path class="ln-gpu" fill="none" d="M54.0 167.1 L399.0 154.1 L514.0 149.8 L629.0 132.5 L744.0 115.2"/>
+<circle class="mk-gpu" cx="54.0" cy="167.1" r="3.4"/>
+<circle class="mk-gpu" cx="399.0" cy="154.1" r="3.4"/>
+<circle class="mk-gpu" cx="514.0" cy="149.8" r="3.4"/>
+<circle class="mk-gpu" cx="629.0" cy="132.5" r="3.4"/>
+<circle class="mk-gpu" cx="744.0" cy="115.2" r="3.4"/>
+<path class="ln-cpu ln-dot" fill="none" d="M54.0 219.1 L399.0 206.1 L514.0 210.4 L629.0 141.2 L744.0 110.9"/>
+<path class="mk-cpu" d="M54.0 215.7 L57.2 221.7 L50.8 221.7 Z"/>
+<path class="mk-cpu" d="M399.0 202.7 L402.2 208.7 L395.8 208.7 Z"/>
+<path class="mk-cpu" d="M514.0 207.0 L517.2 213.0 L510.8 213.0 Z"/>
+<path class="mk-cpu" d="M629.0 137.8 L632.2 143.8 L625.8 143.8 Z"/>
+<path class="mk-cpu" d="M744.0 107.5 L747.2 113.5 L740.8 113.5 Z"/>
+<path class="ln-tp ln-dash" fill="none" d="M54.0 141.2 L284.0 102.2 L399.0 76.3 L514.0 50.3"/>
+<rect class="mk-tp" x="51.0" y="138.2" width="6" height="6"/>
+<rect class="mk-tp" x="281.0" y="99.2" width="6" height="6"/>
+<rect class="mk-tp" x="396.0" y="73.3" width="6" height="6"/>
+<rect class="mk-tp" x="511.0" y="47.3" width="6" height="6"/>
+</svg>
+      <div class="legend"><span><i class="gpu"></i>balanced</span><span><i class="cpu"></i>decode-heavy</span><span><i class="tp"></i>prefill-heavy</span><span><i class="ref"></i>1.0&times; parity</span></div>
+    </figure>
+    <div class="tbl-scroll"><table>
+      <caption>vLLM bf16, aggregate tok/s. A5000 / A6000 / ratio per shape.</caption>
+      <thead><tr><th>C</th><th class="n">bal A5000</th><th class="n">A6000</th><th class="n">ratio</th><th class="n">dec A5000</th><th class="n">A6000</th><th class="n">ratio</th><th class="n">pre A5000</th><th class="n">A6000</th><th class="n">ratio</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td class="n">67.9</td><td class="n">68.5</td><td class="n">1.01&times;</td><td class="n">68.6</td><td class="n">60.8</td><td class="n bad">0.89&times;</td><td class="n">49.7</td><td class="n">53.2</td><td class="n">1.07&times;</td></tr>
+        <tr><td>4</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">118.5</td><td class="n">138.1</td><td class="n">1.16&times;</td></tr>
+        <tr><td>8</td><td class="n">479</td><td class="n">497</td><td class="n">1.04&times;</td><td class="n">505</td><td class="n">467</td><td class="n bad">0.92&times;</td><td class="n">157</td><td class="n">191</td><td class="n">1.22&times;</td></tr>
+        <tr><td>16</td><td class="n">851</td><td class="n">892</td><td class="n">1.05&times;</td><td class="n">958</td><td class="n">871</td><td class="n bad">0.91&times;</td><td class="n">182</td><td class="n">233</td><td class="n">1.28&times;</td></tr>
+        <tr><td>32</td><td class="n">1363</td><td class="n">1492</td><td class="n">1.09&times;</td><td class="n">1630</td><td class="n">1745</td><td class="n">1.07&times;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+        <tr><td>64</td><td class="n">1981</td><td class="n">2248</td><td class="n">1.13&times;</td><td class="n">2503</td><td class="n">2853</td><td class="n">1.14&times;</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout warn"><span class="lab">Thermal caveat &mdash; chassis-specific, not a datasheet A6000</span>The decode dip (A6000 slower at C&le;16, 0.89&ndash;0.92&times;) is <b>not</b> a bandwidth story &mdash; the cards are equal. It is <b>thermal throttling</b>: the A6000 runs at <b>85&ndash;88&nbsp;&deg;C</b> and clocks down in <em>this chassis</em> (see &sect;13). No cooling / run-order ablation isolated a datasheet-normal A6000 baseline, so read this as a property of this cooling and run, not of the card in general. Under llama.cpp Q6_K, single-stream (C=1) decode is ~124 tok/s (A5000) / ~114 (A6000) &mdash; nearly 2&times; vLLM bf16's ~68, because Q6_K moves far fewer weight bytes per token; the ordering reverses under concurrency (&sect;14).</div>
+  </section>
+
+  <section id="crossover" data-grp="Multi GPU">
+    <div class="sec-head"><span class="idx">12</span><h2>TP wins early; DP wins under load</h2></div>
+    <div class="col">
+      <p>This is the headline multi-GPU result, across all three shapes. Read the three panels as a <b>crossover</b>: each plots placement throughput &divide; best single card against concurrency, with a neutral 1.0&times; reference. <b>Tensor-parallel</b> dominates at low concurrency but its edge decays toward parity (or a loss) as C rises; <b>data-parallel</b> starts near parity and climbs with load. They cross around C=32 on the balanced shape.</p>
+      <p class="fn"><b>A required correction:</b> DP does <em>not</em> beat the best single card at every point. Its own ratios include 0.99&times; balanced and 0.95&times; prefill at C=1 &mdash; and more importantly <b>DP C=1 is A5000-only</b>: with one request in flight the join-shortest-queue tie-break always picks replica 0 (the A5000), and live telemetry confirms GPU1 idle. So <b>C=1 is not a two-GPU datapoint</b> and is excluded from the DP trends below. The honest statement: DP is the robust throughput winner <em>once enough concurrent work exists to engage both replicas</em>.</p>
+    </div>
+    <figure class="chart">
+      <h4>Placement &divide; best single card, by shape</h4>
+      <p class="sub">TP (violet, dashed squares) vs DP (teal, circles), against a 1.0&times; parity line. DP starts at C&ge;8 (prefill: C&ge;4) because its C=1 is an A5000-only single stream.</p>
+      <div class="chart-3">
+        <figure style="margin:0"><h4 style="font-size:13px;margin-bottom:4px">Balanced</h4><svg viewBox="0 0 760 300" role="img" aria-labelledby="rBal-t rBal-d" preserveAspectRatio="xMidYMid meet">
+<title id="rBal-t">Balanced shape: TP over DP over best-single ratio</title>
+<desc id="rBal-d">Balanced shape ratio to best single card. TP starts at 1.55x at C=1 and decays to 1.04x at C=64. DP (excluding the A5000-only C=1 point) rises from 1.03x at C=8 to 1.23x at C=64. They cross near C=32.</desc>
+<line class="grid" x1="54" y1="244.8" x2="744" y2="244.8"/>
+<text class="axlab" x="46" y="248.8" text-anchor="end">0.8&#215;</text>
+<line class="ln-ref" x1="54" y1="191.9" x2="744" y2="191.9"/>
+<text class="axlab" x="46" y="195.9" text-anchor="end">1.0&#215;</text>
+<line class="grid" x1="54" y1="139.0" x2="744" y2="139.0"/>
+<text class="axlab" x="46" y="143.0" text-anchor="end">1.2&#215;</text>
+<line class="grid" x1="54" y1="86.1" x2="744" y2="86.1"/>
+<text class="axlab" x="46" y="90.1" text-anchor="end">1.4&#215;</text>
+<line class="grid" x1="54" y1="33.2" x2="744" y2="33.2"/>
+<text class="axlab" x="46" y="37.2" text-anchor="end">1.6&#215;</text>
+<text class="axlab" x="54.0" y="278" text-anchor="middle">1</text>
+<text class="axlab" x="399.0" y="278" text-anchor="middle">8</text>
+<text class="axlab" x="514.0" y="278" text-anchor="middle">16</text>
+<text class="axlab" x="629.0" y="278" text-anchor="middle">32</text>
+<text class="axlab" x="744.0" y="278" text-anchor="middle">64</text>
+<text class="axlab" x="54" y="16" text-anchor="start">placement / best single</text>
+<text class="axlab" x="744" y="292" text-anchor="end">concurrency C (log)</text>
+<path class="ln-tp ln-dash" fill="none" d="M54.0 46.4 L399.0 88.8 L514.0 115.2 L629.0 152.2 L744.0 181.3"/>
+<rect class="mk-tp" x="51.0" y="43.4" width="6" height="6"/>
+<rect class="mk-tp" x="396.0" y="85.8" width="6" height="6"/>
+<rect class="mk-tp" x="511.0" y="112.2" width="6" height="6"/>
+<rect class="mk-tp" x="626.0" y="149.2" width="6" height="6"/>
+<rect class="mk-tp" x="741.0" y="178.3" width="6" height="6"/>
+<path class="ln-gpu" fill="none" d="M399.0 184.0 L514.0 173.4 L629.0 152.2 L744.0 131.1"/>
+<circle class="mk-gpu" cx="399.0" cy="184.0" r="3.6"/>
+<circle class="mk-gpu" cx="514.0" cy="173.4" r="3.6"/>
+<circle class="mk-gpu" cx="629.0" cy="152.2" r="3.6"/>
+<circle class="mk-gpu" cx="744.0" cy="131.1" r="3.6"/>
+</svg></figure>
+        <figure style="margin:0"><h4 style="font-size:13px;margin-bottom:4px">Prefill-heavy</h4><svg viewBox="0 0 760 300" role="img" aria-labelledby="rPre-t rPre-d" preserveAspectRatio="xMidYMid meet">
+<title id="rPre-t">Prefill-heavy shape: TP over DP over best-single ratio</title>
+<desc id="rPre-d">Prefill-heavy shape ratio to best single card. TP wins only at C=1 (1.14x) then loses for all C of 4 or more, falling to 0.82x at C=16. DP (excluding the A5000-only C=1 point) climbs from 1.16x at C=4 to 1.38x at C=16.</desc>
+<line class="grid" x1="54" y1="244.8" x2="744" y2="244.8"/>
+<text class="axlab" x="46" y="248.8" text-anchor="end">0.8&#215;</text>
+<line class="ln-ref" x1="54" y1="191.9" x2="744" y2="191.9"/>
+<text class="axlab" x="46" y="195.9" text-anchor="end">1.0&#215;</text>
+<line class="grid" x1="54" y1="139.0" x2="744" y2="139.0"/>
+<text class="axlab" x="46" y="143.0" text-anchor="end">1.2&#215;</text>
+<line class="grid" x1="54" y1="86.1" x2="744" y2="86.1"/>
+<text class="axlab" x="46" y="90.1" text-anchor="end">1.4&#215;</text>
+<line class="grid" x1="54" y1="33.2" x2="744" y2="33.2"/>
+<text class="axlab" x="46" y="37.2" text-anchor="end">1.6&#215;</text>
+<text class="axlab" x="54.0" y="278" text-anchor="middle">1</text>
+<text class="axlab" x="399.0" y="278" text-anchor="middle">4</text>
+<text class="axlab" x="571.5" y="278" text-anchor="middle">8</text>
+<text class="axlab" x="744.0" y="278" text-anchor="middle">16</text>
+<text class="axlab" x="54" y="16" text-anchor="start">placement / best single</text>
+<text class="axlab" x="744" y="292" text-anchor="end">concurrency C (log)</text>
+<path class="ln-tp ln-dash" fill="none" d="M54.0 154.9 L399.0 202.5 L571.5 228.9 L744.0 239.5"/>
+<rect class="mk-tp" x="51.0" y="151.9" width="6" height="6"/>
+<rect class="mk-tp" x="396.0" y="199.5" width="6" height="6"/>
+<rect class="mk-tp" x="568.5" y="225.9" width="6" height="6"/>
+<rect class="mk-tp" x="741.0" y="236.5" width="6" height="6"/>
+<path class="ln-gpu" fill="none" d="M399.0 149.6 L571.5 133.7 L744.0 91.4"/>
+<circle class="mk-gpu" cx="399.0" cy="149.6" r="3.6"/>
+<circle class="mk-gpu" cx="571.5" cy="133.7" r="3.6"/>
+<circle class="mk-gpu" cx="744.0" cy="91.4" r="3.6"/>
+</svg></figure>
+        <figure style="margin:0"><h4 style="font-size:13px;margin-bottom:4px">Decode-heavy</h4><svg viewBox="0 0 760 300" role="img" aria-labelledby="rDec-t rDec-d" preserveAspectRatio="xMidYMid meet">
+<title id="rDec-t">Decode-heavy shape: TP over DP over best-single ratio</title>
+<desc id="rDec-d">Decode-heavy shape ratio to best single card. TP leads up to C=32 (1.57x at C=1) then crosses below best single at C=64 (0.97x). DP (excluding the A5000-only C=1 point) rises from 1.05x at C=8 to 1.14x at C=64.</desc>
+<line class="grid" x1="54" y1="244.8" x2="744" y2="244.8"/>
+<text class="axlab" x="46" y="248.8" text-anchor="end">0.8&#215;</text>
+<line class="ln-ref" x1="54" y1="191.9" x2="744" y2="191.9"/>
+<text class="axlab" x="46" y="195.9" text-anchor="end">1.0&#215;</text>
+<line class="grid" x1="54" y1="139.0" x2="744" y2="139.0"/>
+<text class="axlab" x="46" y="143.0" text-anchor="end">1.2&#215;</text>
+<line class="grid" x1="54" y1="86.1" x2="744" y2="86.1"/>
+<text class="axlab" x="46" y="90.1" text-anchor="end">1.4&#215;</text>
+<line class="grid" x1="54" y1="33.2" x2="744" y2="33.2"/>
+<text class="axlab" x="46" y="37.2" text-anchor="end">1.6&#215;</text>
+<text class="axlab" x="54.0" y="278" text-anchor="middle">1</text>
+<text class="axlab" x="399.0" y="278" text-anchor="middle">8</text>
+<text class="axlab" x="514.0" y="278" text-anchor="middle">16</text>
+<text class="axlab" x="629.0" y="278" text-anchor="middle">32</text>
+<text class="axlab" x="744.0" y="278" text-anchor="middle">64</text>
+<text class="axlab" x="54" y="16" text-anchor="start">placement / best single</text>
+<text class="axlab" x="744" y="292" text-anchor="end">concurrency C (log)</text>
+<path class="ln-tp ln-dash" fill="none" d="M54.0 41.2 L399.0 59.7 L514.0 83.5 L629.0 152.2 L744.0 199.8"/>
+<rect class="mk-tp" x="51.0" y="38.2" width="6" height="6"/>
+<rect class="mk-tp" x="396.0" y="56.7" width="6" height="6"/>
+<rect class="mk-tp" x="511.0" y="80.5" width="6" height="6"/>
+<rect class="mk-tp" x="626.0" y="149.2" width="6" height="6"/>
+<rect class="mk-tp" x="741.0" y="196.8" width="6" height="6"/>
+<path class="ln-gpu" fill="none" d="M399.0 178.7 L514.0 176.0 L629.0 168.1 L744.0 154.9"/>
+<circle class="mk-gpu" cx="399.0" cy="178.7" r="3.6"/>
+<circle class="mk-gpu" cx="514.0" cy="176.0" r="3.6"/>
+<circle class="mk-gpu" cx="629.0" cy="168.1" r="3.6"/>
+<circle class="mk-gpu" cx="744.0" cy="154.9" r="3.6"/>
+</svg></figure>
+      </div>
+      <div class="legend"><span><i class="tp"></i>tensor-parallel / best single</span><span><i class="gpu"></i>data-parallel / best single</span><span><i class="ref"></i>1.0&times; parity</span></div>
+    </figure>
+    <div class="tbl-scroll"><table>
+      <caption>Ratio to best single card, by shape &amp; concurrency. TP is shape-specific at C=1 (1.55&times; balanced, 1.57&times; decode, only 1.14&times; prefill). DP C=1 is A5000-only (excluded from trends).</caption>
+      <thead><tr><th>Shape</th><th>C=1</th><th>C=4</th><th>C=8</th><th>C=16</th><th>C=32</th><th>C=64</th></tr></thead>
+      <tbody>
+        <tr><td>balanced &mdash; TP</td><td class="n tp">1.55&times;</td><td class="n">&mdash;</td><td class="n">1.39&times;</td><td class="n">1.29&times;</td><td class="n">1.15&times;</td><td class="n">1.04&times;</td></tr>
+        <tr><td>balanced &mdash; DP</td><td class="n dim">(A5000-only)</td><td class="n">&mdash;</td><td class="n">1.03&times;</td><td class="n">1.07&times;</td><td class="n">1.15&times;</td><td class="n gpu">1.23&times;</td></tr>
+        <tr><td>prefill &mdash; TP</td><td class="n tp">1.14&times;</td><td class="n bad">0.96&times;</td><td class="n bad">0.86&times;</td><td class="n bad">0.82&times;</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+        <tr><td>prefill &mdash; DP</td><td class="n dim">(A5000-only)</td><td class="n">1.16&times;</td><td class="n">1.22&times;</td><td class="n gpu">1.38&times;</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+        <tr><td>decode &mdash; TP</td><td class="n tp">1.57&times;</td><td class="n">&mdash;</td><td class="n">1.50&times;</td><td class="n">1.41&times;</td><td class="n">1.15&times;</td><td class="n bad">0.97&times;</td></tr>
+        <tr><td>decode &mdash; DP</td><td class="n dim">(A5000-only)</td><td class="n">&mdash;</td><td class="n">1.05&times;</td><td class="n">1.06&times;</td><td class="n">1.09&times;</td><td class="n gpu">1.14&times;</td></tr>
+      </tbody>
+    </table></div>
+    <div class="col">
+      <p><b>Balanced:</b> TP 1.55&times;&rarr;1.04&times; (fades to near-parity), DP to 1.23&times;; DP delivers 97&ndash;99% of the load-matched two-replica ceiling (<code>dp2 / sum@(C/2)</code>). <b>Prefill:</b> TP helps only at C=1 (1.14&times;) then loses for all C&ge;4 (down to 0.82&times;) &mdash; once several prefills batch on one card the extra cores are saturated and the cross-PCIe all-reduce is pure overhead; DP is the clear winner to 1.38&times;. <b>Decode:</b> TP leads to C=32 then crosses <em>below</em> the best single card at C=64 (0.97&times;), exactly where batched decode saturates compute and the per-token all-reduce becomes the bottleneck; DP overtakes and keeps scaling (1.14&times;).</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Balanced TTFT and single-stream decode proxy. TP trades TTFT for decode; the trade only pays at low concurrency.</caption>
+      <thead><tr><th>C</th><th class="n">a5000 TTFT (s)</th><th class="n">a6000 TTFT</th><th class="n">tp2 TTFT</th><th class="n">dp2 TTFT</th><th class="n">a6000 decode</th><th class="n">tp2 decode</th><th class="n">dp2 decode</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td class="n">0.072</td><td class="n">0.066</td><td class="n">0.072</td><td class="n">0.073</td><td class="n">69.6</td><td class="n tp">108.8</td><td class="n">69.1</td></tr>
+        <tr><td>64</td><td class="n">0.448</td><td class="n">0.376</td><td class="n">0.648</td><td class="n gpu">0.320</td><td class="n">37.3</td><td class="n">40.1</td><td class="n">48.4</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout tp"><span class="lab">"TP wins" and "TP loses" are both wrong</span>TP's single-stream <b>decode</b> proxy (108.8, ~1.56&times; best-single) comes from two memory buses each reading half the weights. But TP's <b>TTFT is the worst of any placement at high C</b> (0.648&nbsp;s at balanced C=64 vs the A6000's 0.376&nbsp;s; in prefill, 1.125&nbsp;s at C=16 vs the A6000's 0.678&nbsp;s) &mdash; the per-layer all-reduce and heterogeneous sync tax time-to-first-token. <b>DP, by contrast, has the <em>lowest</em> loaded TTFT</b> (0.320&nbsp;s at balanced C=64 vs the A6000's 0.376&nbsp;s): its two replicas each see half the offered load, so per-card queueing drops below a single card's. DP wins aggregate throughput <em>and</em> TTFT under load (&sect;15). Capacity-forced TP (models too large for one card) was not tested.</div>
+  </section>
+
+  <section id="tax" data-grp="Multi GPU">
+    <div class="sec-head"><span class="idx">13</span><h2>The topology and thermal taxes explain why throughput is not efficiency</h2></div>
+    <div class="col">
+      <p>Per-card telemetry at C=64 corrects three tempting assumptions. Both cards run ~87&ndash;91% utilization in TP and DP &mdash; the loss is <b>not idle silicon</b>. The two cards hit <em>different</em> limits: the A5000 is <b>power-capped</b> (at its 230&nbsp;W board limit ~98% of samples), the A6000 is <b>thermally throttled</b> (sw_thermal_slowdown active in most high-C samples, 85&ndash;88&nbsp;&deg;C). DP is well balanced (both replicas ~91%, the A6000 drawing more power for its larger share).</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Per physical card at C=64 (<code>telemetry_by_gpu</code>). sw_thermal_slowdown / sw_power_cap = fraction of samples with that throttle active.</caption>
+      <thead><tr><th>config</th><th>card</th><th class="n">util med</th><th class="n">power med</th><th class="n">temp med</th><th class="n">thermal slowdown</th><th class="n">power cap</th></tr></thead>
+      <tbody>
+        <tr><td>tp2-balanced</td><td>A5000</td><td class="n">87%</td><td class="n">224 W</td><td class="n">79 &deg;C</td><td class="n">0%</td><td class="n cpu">98%</td></tr>
+        <tr><td>tp2-balanced</td><td>A6000</td><td class="n">87%</td><td class="n">229 W</td><td class="n">84 &deg;C</td><td class="n bad">77%</td><td class="n">0%</td></tr>
+        <tr><td>dp2-balanced</td><td>A5000</td><td class="n">91%</td><td class="n">231 W</td><td class="n">79 &deg;C</td><td class="n">0%</td><td class="n cpu">98%</td></tr>
+        <tr><td>dp2-balanced</td><td>A6000</td><td class="n">91%</td><td class="n">276 W</td><td class="n">87 &deg;C</td><td class="n bad">73%</td><td class="n">24%</td></tr>
+        <tr><td>a6000-decode</td><td>A6000</td><td class="n">88%</td><td class="n">293 W</td><td class="n">86 &deg;C</td><td class="n bad">81%</td><td class="n">30%</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Efficiency &mdash; tokens/sec per watt (board power)</h3>
+    <div class="hbars" aria-hidden="true">
+      <div class="hbar"><span class="lab">A5000 &mdash; decode</span><span class="track"><span class="fill gpu" style="width:99.7%"></span></span><span class="val">10.97</span></div>
+      <div class="hbar"><span class="lab">A5000 &mdash; balanced</span><span class="track"><span class="fill gpu" style="width:78.9%"></span></span><span class="val">8.68</span></div>
+      <div class="hbar"><span class="lab">A6000 &mdash; balanced</span><span class="track"><span class="fill cpu" style="width:70.4%"></span></span><span class="val">7.74</span></div>
+      <div class="hbar"><span class="lab">DP2 &mdash; decode</span><span class="track"><span class="fill gpu" style="width:58.3%"></span></span><span class="val">6.41</span></div>
+      <div class="hbar"><span class="lab">DP2 &mdash; balanced</span><span class="track"><span class="fill gpu" style="width:49.8%"></span></span><span class="val">5.47</span></div>
+      <div class="hbar"><span class="lab">TP2 &mdash; balanced</span><span class="track"><span class="fill tp" style="width:47.0%"></span></span><span class="val">5.16</span></div>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Per-watt at each config's peak-throughput C. Board power only (summed 1 Hz nvidia-smi medians), not integrated joules or system energy.</caption>
+      <thead><tr><th>shape</th><th>config</th><th class="n">peak tok/s</th><th class="n">&Sigma; power</th><th class="n">tok/s per W</th><th class="n">J / 1k tok</th></tr></thead>
+      <tbody>
+        <tr><td>balanced</td><td>vllm-a5000</td><td class="n">1981</td><td class="n">228 W</td><td class="n gpu">8.68</td><td class="n">115</td></tr>
+        <tr><td>balanced</td><td>vllm-a6000</td><td class="n">2248</td><td class="n">290 W</td><td class="n">7.74</td><td class="n">129</td></tr>
+        <tr><td>balanced</td><td>vllm-tp2</td><td class="n">2339</td><td class="n">453 W</td><td class="n">5.16</td><td class="n">194</td></tr>
+        <tr><td>balanced</td><td>vllm-dp2</td><td class="n">2774</td><td class="n">507 W</td><td class="n">5.47</td><td class="n">183</td></tr>
+        <tr><td>decode</td><td>vllm-a5000</td><td class="n">2503</td><td class="n">228 W</td><td class="n gpu">10.97</td><td class="n">91</td></tr>
+        <tr><td>decode</td><td>vllm-dp2</td><td class="n">3256</td><td class="n">508 W</td><td class="n">6.41</td><td class="n">156</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout warn"><span class="lab">Efficiency, at the actual scale</span>The single <b>A5000 is the efficiency winner</b> &mdash; lowest power, competitive throughput. The measured two-GPU configs are roughly <b>37&ndash;42% less efficient</b> than a single A5000 in the shown peak cells (TP balanced 5.16 vs 8.68 = 40.6% less; DP balanced 5.47 = 37.0% less; DP decode 6.41 vs 10.97 = 41.6% less) &mdash; you pay ~2&times; power for 1.05&ndash;1.4&times; throughput. DP is slightly more efficient than TP. This is <b>GPU-board power only</b>. Mechanisms here are <em>consistent with</em> PCIe/cross-NUMA cost and this chassis's cooling; they are <b>not isolated</b> (no NCCL/PCIe bandwidth trace or NUMA-pinning ablation).</div>
+  </section>
+
+  <section id="placement-engine" data-grp="Multi GPU">
+    <div class="sec-head"><span class="idx">14</span><h2>Placement and engine choice are separate axes</h2></div>
+    <div class="col">
+      <p>A short secondary cross-read, not a second engine shootout. <b>Iso-<em>placement</em>, not iso-<em>precision</em></b> (llama.cpp Q6_K vs vLLM bf16) &mdash; directional only. For the fair matched-bf16 engine benchmark, see <a href="#engines">&sect;7</a>.</p>
+    </div>
+    <div class="tbl-scroll"><table>
+      <caption>Balanced shape, aggregate tok/s. Both engines run continuous batching &mdash; the gap is not "batching vs none."</caption>
+      <thead><tr><th>C</th><th class="n">llama.cpp a5000</th><th class="n">vLLM a5000</th><th class="n">llama.cpp a6000</th><th class="n">vLLM a6000</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td class="n gpu">121</td><td class="n">68</td><td class="n gpu">112</td><td class="n">68</td></tr>
+        <tr><td>64</td><td class="n">792</td><td class="n gpu">1981</td><td class="n">852</td><td class="n gpu">2248</td></tr>
+      </tbody>
+    </table></div>
+    <p class="col">llama.cpp wins single-stream (Q6_K moves fewer bytes per token); vLLM wins ~2.5&times; under concurrency &mdash; vLLM's batching/kernel/attention stack scales better than this llama.cpp Q6_K configuration at high concurrency. This is a <b>precision-mismatched directional cross-read</b>; do not quote it as a fair engine result.</p>
+  </section>
+
+  <!-- ==================== DECISIONS ==================== -->
+  <section id="decide" data-grp="Decisions">
+    <div class="sec-head"><span class="idx">15</span><h2>One decision guide for the whole study</h2></div>
+    <div class="col"><p>Match the operating point to your goal, not to a peak number. Everything here is read off the data above.</p></div>
+    <div class="tbl-scroll"><table class="claim">
+      <caption>Goal &rarr; choice &rarr; evidence &rarr; caveat. "Single-GPU" rows are the A5000 field guide; "two-GPU" rows are the A5000+A6000 study.</caption>
+      <thead><tr><th>Goal</th><th>Choice</th><th>Evidence</th><th>Caveat</th></tr></thead>
+      <tbody>
+        <tr><td>Lowest latency per user (single card)</td><td>Concurrency <b>C&le;4</b>, over-provision</td><td>fair-share 118&rarr;73 tok/s; p50 2.2&ndash;3.5 s</td><td>per-user rate collapses beyond C=4</td></tr>
+        <tr><td>Max single-A5000 throughput</td><td><b>C&asymp;48&ndash;64</b> (~789&ndash;802 tok/s)</td><td>peak 801.8 @ C=64; 32&ndash;64 all &ge;93% of peak</td><td>past C&asymp;64 throughput <em>declines</em></td></tr>
+        <tr><td>Balanced single-card serving</td><td><b>C&asymp;24&ndash;32</b> (~700&ndash;750 tok/s)</td><td>efficient region ends here; p50 ~9&ndash;11 s</td><td>marginal gains shrink fast past C=32</td></tr>
+        <tr><td>Long context / many resident sessions</td><td>q8_0 KV; drop per-slot ctx</td><td>30&times;8k fits <em>only</em> with q8_0 KV (edge)</td><td>fair-share 3.78 tok/s; 100-anywhere infeasible</td></tr>
+        <tr><td>Production multi-user engine</td><td><b>vLLM</b> (or SGLang)</td><td>~4&times; llama.cpp at C=64, matched bf16</td><td>bf16, prefix-cache off; not iso-config</td></tr>
+        <tr><td>Max two-GPU throughput under load</td><td><b>Data-parallel</b> (two replicas)</td><td>1.14&ndash;1.23&times; best-single @ C=64, scales with C</td><td>needs C to engage both; not best TTFT; ~2&times; power</td></tr>
+        <tr><td>Low-concurrency / single-stream latency (two cards)</td><td><b>Tensor-parallel</b></td><td>~1.5&times; best-single at C=1 (balanced/decode)</td><td>worse TTFT; fades/loses under load; only 1.14&times; prefill</td></tr>
+        <tr><td>Best time-to-first-token under load</td><td><b>Data-parallel</b> (A6000 close behind)</td><td>DP 0.320 vs A6000 0.376 at balanced C=64; TP worst (0.648)</td><td>load-split halves per-card queue; closed-loop</td></tr>
+        <tr><td>Best tokens/sec per watt</td><td><b>Single A5000</b></td><td>8.68&ndash;10.97 tok/s/W; lowest board power</td><td>two-GPU configs ~37&ndash;42% less efficient</td></tr>
+        <tr><td>Fastest decode / most tok per byte</td><td>Quantize weights low (<b>Q4_K_M</b>)</td><td>decode bandwidth-bound; 2.18&times; BF16</td><td>+2.42% wikitext PPL; validate on your task</td></tr>
+        <tr><td>Any config</td><td><b>Flash-attention ON</b></td><td>+15&ndash;21% prefill, +4&ndash;9% decode, free</td><td>&mdash;</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout tp"><span class="lab">Is TP ever the right call on this box?</span>Yes, but narrowly: a <b>latency-sensitive, low-concurrency</b> service for a model that fits on one card, where its ~1.5&times; single-stream decode outweighs its worse TTFT. For anything throughput-oriented or beyond ~C=32, <b>DP wins</b>. A model that <em>doesn't</em> fit on one card would <em>force</em> TP (or a bigger card) &mdash; a regime this study did not test.</div>
+  </section>
+
+  <!-- ==================== TRUST AND REPRODUCTION ==================== -->
+  <section id="caveats" data-grp="Trust &amp; Reproduction">
+    <div class="sec-head"><span class="idx">16</span><h2>What these results do &mdash; and do not &mdash; establish</h2></div>
+    <div class="tbl-scroll"><table class="claim">
+      <caption>Claim family &rarr; what is supported &rarr; what is <em>not</em> established. Material caveats also live beside their findings above.</caption>
+      <thead><tr><th>Claim family</th><th>Supported</th><th>Not established</th></tr></thead>
+      <tbody>
+        <tr><td>Transferability</td><td>These exact numbers on this A5000 (+A6000), llama.cpp <code>91d2fc3</code>, Qwen3-4B Q6_K/bf16</td><td>any transfer to other GPUs, interconnects, quantizations, batch policies, or prompt/gen lengths</td></tr>
+        <tr><td>Workload &amp; arrival process</td><td>closed-loop capacity (barrier sweep) and finite-user think-time (Locust); fixed-server/vary-client</td><td>open-loop Poisson-arrival SLO behavior; saturation and Locust tok/s are <em>not</em> comparable</td></tr>
+        <tr><td>Metric proxies</td><td>trend of GPU util median vs server CPU (~11&times;); TTFT/decode as client-observed proxies</td><td><code>utilization.memory</code> is not GB/s; TTFT/decode are not isolated kernel times; GPU-median alone is misleading (bursty, p95=99%)</td></tr>
+        <tr><td>Engine precision/config</td><td>matched-bf16 ordering: tie at C=1, vLLM/SGLang ~4&times; at C=64</td><td>each engine's optimal quant (low-bit GGUF / AWQ / FP8); SGLang ran CUDA-graphs-off; no "inherently fastest"</td></tr>
+        <tr><td>Context / accuracy</td><td>fit frontier (static boot alloc), depth decode curves, prefix-cache A/B, wikitext PPL ordering</td><td>latency at a fit slot count; q8_0 KV quality; legal-task accuracy; paired per-chunk PPL CI; deep-bucket n=2</td></tr>
+        <tr><td>SVD probe</td><td>the inter-checkpoint delta is high-rank, embedding-shifting, MLP-heavy</td><td>a FullFT lineage; a working extracted/validated adapter; any refutation of "LoRA can match FullFT"</td></tr>
+        <tr><td>Model scaling</td><td>footprint tracks attention geometry, not param count; matched-tier speed/VRAM</td><td>iso-precision (bpw differ 4.97/5.03/5.90); quality; TTFT for 9B/E2B; vLLM/SGLang on new archs</td></tr>
+        <tr><td>Topology / thermal</td><td>A6000 thermal throttling (85&ndash;88&nbsp;&deg;C) is a first-class result for this chassis; both cards busy in TP</td><td>datasheet-normal A6000 baseline; NCCL/PCIe/NUMA-pinning isolation; "TP loses" is a property of <em>this</em> SYS interconnect, not TP in general</td></tr>
+        <tr><td>Repetitions</td><td>C=32 repeat within 0.6%; Work-A cross-check on the curve</td><td>no independent repetitions of the matrix; treat few-percent gaps (e.g. balanced C=64 TP 1.04&times;) as near-parity</td></tr>
+        <tr><td>Provenance</td><td>14/14 fail-closed matrix checks; server&harr;client token cross-check on every point</td><td>E1/E4/E5/Locust manifests record <code>source_dirty=true</code>; Work-A <code>source_git_commit=null</code>; raw per-slot logs gitignored</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout void"><span class="lab">The two rules you must never break</span><b>Never mix closed-loop and open-loop numbers</b> &mdash; the saturation sweep, Locust, and the matrix are all closed-loop; none estimates production Poisson-arrival latency. And <b>never sum the per-request decode proxy across cards</b> &mdash; use aggregate <code>output_tokens_per_s</code> for cluster throughput. The DP router is join-shortest-queue (one policy); per-replica shares are corroborated by server logs but were not persisted into the benchmark JSON.</div>
+  </section>
+
+  <section id="repro" data-grp="Trust &amp; Reproduction">
+    <div class="sec-head"><span class="idx">17</span><h2>Reproduction, provenance &amp; source-of-truth</h2></div>
+    <div class="tbl-scroll"><table>
+      <caption>Studies &rarr; drivers &rarr; committed evidence directories. Raw per-slot server logs are gitignored; the derived evidence that depends on them is committed.</caption>
+      <thead><tr><th>Study</th><th>Driver</th><th>Result dir</th></tr></thead>
+      <tbody>
+        <tr><td>Q6_K 1/30/100 benchmark (Work A)</td><td><code>benchmark.py</code></td><td><code>results/a5000-20260720T162318Z/</code></td></tr>
+        <tr><td>E1 concurrency sweep (12 pts)</td><td><code>sweep_concurrency.sh</code></td><td><code>results/sweep-20260720T191546Z/</code></td></tr>
+        <tr><td>E4 precision / hyperparameter</td><td><code>precision_sweep.sh</code></td><td><code>results/precision-20260720T191131Z/</code></td></tr>
+        <tr><td>E5 engine (initial, vLLM VOID)</td><td>&mdash;</td><td><code>results/engines/eng-20260721T002012Z/</code></td></tr>
+        <tr><td>&sect;5 engine re-run (bf16, 3 engines)</td><td><code>engine_fair.sh</code> + <code>bench_external.py</code></td><td><code>results/enginefair-20260721T062947Z/</code></td></tr>
+        <tr><td>E2/E3 Locust finite-user</td><td><code>locust_run.sh</code></td><td><code>results/locust/loc-20260721T005851Z/</code></td></tr>
+        <tr><td>SVD LoRA-extraction probe</td><td><code>svd_extract.py</code></td><td><code>results/extraction/</code></td></tr>
+        <tr><td>E6 context-window scaling</td><td><code>context_sweep.sh</code></td><td><code>results/context-20260721T023727Z/</code></td></tr>
+        <tr><td>E7 accuracy (full-test perplexity)</td><td><code>perplexity.sh</code></td><td><code>results/accuracy-full-20260721T025541Z/</code></td></tr>
+        <tr><td>Multi-turn chatbot (concurrent + single)</td><td><code>mt_concurrent.py</code> + <code>multiturn_replay.py</code></td><td><code>results/ctxchat-20260721T030352Z/</code></td></tr>
+        <tr><td>Prefix-cache A/B replay</td><td><code>composite_sessions.py</code></td><td><code>results/chatbot-20260721T024328Z/</code></td></tr>
+        <tr><td>&sect;10 model scaling (4B/9B/E2B)</td><td><code>model_serve_bench.sh</code></td><td><code>results/modelscale-20260721T053813Z/</code></td></tr>
+        <tr><td>Multi-GPU matrix (14 placement&times;shape)</td><td><code>gpu_matrix.sh</code> + <code>matrix_report.py</code></td><td>derived record; raw/derived bundle no longer distributed</td></tr>
+      </tbody>
+    </table></div>
+    <div class="col">
+      <p><b>Environment.</b> Single-A5000 pipeline: <code>./run.sh reproduce</code> (download &rarr; merge &rarr; build llama.cpp &rarr; convert &rarr; quantize &rarr; verify &rarr; benchmark). Engine stack (&sect;5): llama.cpp <code>91d2fc3</code>, <b>vLLM 0.11.0 / torch 2.8.0+cu128 / triton 3.4.0 / transformers 4.57.1</b>, <b>SGLang 0.5.15.post1</b>. &sect;10 GGUFs self-quantized from bf16 with identical <code>llama-quantize Q4_K_M</code> (SHA-256 + bpw audit in each run's <code>provenance.json</code>). Reference rig: 2&times; Xeon Silver 4210R (40 threads), 125 GB RAM, PCIe Gen3 x16, driver CUDA 13.x.</p>
+      <p><b>Multi-GPU provenance.</b> The matrix run passed <b>14/14 fail-closed checks</b> (<code>matrix_ok</code>, <code>--expect config/matrix.json</code> satisfied, server&harr;client token cross-check non-null on every point). The raw/derived matrix bundle is <b>no longer distributed in the repository</b>; numerical results are preserved in <code>REPORT-MULTIGPU.md</code>, and the scripts and <code>config/matrix.json</code> remain for reproduction. Each run's <code>manifest.json</code> records commit + <code>source_dirty</code> and enumerates both GPUs; the multi-GPU harness requires separately provisioned pinned environments (<code>.venv-harness</code>, <code>.venv-vllm-stable</code>, <code>.venv-sglang</code>).</p>
+    </div>
+    <div class="col foot">
+      <hr class="soft">
+      <p><b>Markdown sources: <code>REPORT.md</code> and <code>REPORT-MULTIGPU.md</code>. This HTML is the combined render.</b> Changes should land in the Markdown first, then regenerate this page, so the one HTML never becomes an independently drifting third report. Multiple adversarial review passes and multi-agent analysis workflows informed these documents; remaining overclaims were corrected per their findings.</p>
+      <p><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></p>
     </div>
   </section>
 
-  <section>
-    <div class="sec-head"><span class="idx">§7</span><h2>When to use what</h2></div>
-    <div class="tbl-scroll"><table>
-      <caption>Read the operating point off the data — match it to your goal, not to a peak number.</caption>
-      <thead><tr><th>Goal</th><th>Do this</th><th>Because</th></tr></thead>
-      <tbody>
-        <tr><td>Lowest latency per user</td><td>Concurrency C ≤ 4, over-provision</td><td>fair-share 118→73 tok/s, p50 2–3.5 s</td></tr>
-        <tr><td>Max total throughput</td><td>C ≈ 48–64 (~789–802 tok/s)</td><td>peak at 64; 32–64 all ≥93% of peak</td></tr>
-        <tr><td>Balanced tok/s + latency</td><td>C ≈ 24–32</td><td>efficient region ends here; p50 ~9–11 s</td></tr>
-        <tr><td>Avoid waste</td><td>Don't exceed C ≈ 64 <em>(this rig/build/model)</em></td><td>throughput <em>declines</em> beyond — you pay host-side overhead for nothing</td></tr>
-        <tr><td>Fastest decode / tok per byte</td><td>Quantize weights low (Q4_K_M)</td><td>decode bandwidth-bound; 2.18× BF16</td></tr>
-        <tr><td>Higher-precision candidate</td><td>Q6_K or Q8_0 (default Q6_K) — validate quality on your task</td><td>prefill flat, so higher bits cost little there; Q6_K/Q8_0 ≈ bf16 on <a href="context.html">wikitext PPL</a> (≤0.014%, not legal-task quality)</td></tr>
-        <tr><td>Any config</td><td>Flash-attention ON</td><td>+15–21% prefill, free</td></tr>
-        <tr><td>Sizing VRAM</td><td>~3.5 GiB + 108 MiB × slots</td><td>linear preallocation (R²=1.0); never the binding limit</td></tr>
-        <tr><td>llama.cpp vs vLLM</td><td>Measured — see §5 + the multi-GPU report</td><td>llama.cpp wins single-stream; vLLM ~2.5–4× under concurrency</td></tr>
-      </tbody>
-    </table></div>
-  </section>
+  </main>
+</div>
 
-  <section style="border-bottom:none">
-    <div class="sec-head"><span class="idx">§8</span><h2>Limitations you must carry with the numbers</h2></div>
-    <div class="col"><ul class="clean">
-      <li><b>One GPU, one build, one model.</b> A5000 24 GB, llama.cpp <code>91d2fc38</code>, Qwen3-4B Q6_K. The peak at 64, the 108 MiB/slot slope, the CPU crossover — all rig-specific; they don't transfer.</li>
-      <li><b>Closed-loop ≠ open-loop.</b> §1 is a fully-backlogged saturation probe; Locust is finite-user think-time. Their tok/s are not comparable and neither is an open-loop Poisson-arrival SLO test.</li>
-      <li><b><code>utilization.memory</code> is a proxy, not bandwidth (GB/s).</b> And GPU util <em>median</em> is misleading alone — reason from the median-vs-p95 gap (median 40% with p95 99% = bursty/starved).</li>
-      <li><b>The engine comparison was VOID then fixed</b> (<a href="engines.html">§3</a>) — bf16 llama.cpp vs vLLM vs SGLang; tie at C=1, vLLM/SGLang ~4× at C=64. Caveat: bf16 (not each engine's best quant), prefix-cache off. New 9B/E2B models (<a href="models.html">§10</a>) ran on llama.cpp only.</li>
-      <li><b>The SVD study measures an inter-checkpoint delta</b>, "LoRA-representable" ≠ a validated adapter, and it refutes nothing about trained-LoRA quality. bf16 read-back also inflates the control's rank floors.</li>
-      <li><b>E4 is 3 samples/point</b> (first a cold outlier); "prefill is flat" means no monotonic bit-width ordering — n=3 is too thin for a robust ranking.</li>
-      <li><b>We measured speed, memory, and wikitext perplexity — not <em>legal-task</em> quality.</b> A full-test (583-chunk) PPL sweep of all five precisions (<a href="context.html">Context &amp; accuracy</a>) found Q6_K/Q8_0 practically indistinguishable from bf16 (≤0.014%, no paired significance test) and Q4_K_M at +2.42% PPL — but that is general-domain next-token likelihood, not contract-intake accuracy, and cross-scheme/AWQ/GPTQ claims (§6 D) remain external literature. Validate quality on your task before dropping bits.</li>
-      <li><b>The host-bound diagnosis is an inference</b>, not an isolated cause — no profiler/CUDA trace/thread ablation was run. Manifests also record <code>source_dirty=true</code>; raw per-slot server logs are gitignored (derived evidence is committed).</li>
-    </ul></div>
-  </section>
-
-  <div class="col foot">
-    <hr class="soft">
-    <p>Reproducible pipeline and the result JSON/CSV are in the repository (raw per-slot server logs are gitignored; the derived evidence that depends on them is committed). Three independent adversarial review passes and a 5-agent analysis workflow informed this guide; flagged overclaims were corrected against the raw data.</p>
-    <p><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></p>
-  </div>
-</main>
+<a class="totop" href="#top">&uarr; Top</a>
 
 <script>
 (function () {
   "use strict";
-  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const NS = "http://www.w3.org/2000/svg";
-  function el(n, a) { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; }
-  const data = {
-    C: [1,2,4,8,16,24,32,48,64,96,128],
-    tps: [118.4,205.5,293.5,375.4,637.6,704.2,748.5,789.0,801.8,772.7,749.3],
-    gpu: [94,91,86,80,61,54,50,44,46,38,41],
-    cpu: [2.55,2.60,2.67,2.80,3.87,5.27,7.22,10.44,13.82,21.26,29.13],
-    vram: [3584,3692,3908,4340,5204,6072,6932,8664,10388,13854,17308],
-    quantLabel: ["Q4_K_M","Q5_K_M","Q6_K","Q8_0","BF16"],
-    quantTps: [167.99,155.15,133.26,125.37,77.01]
-  };
-  const W = 900, H = 340, m = { t: 18, r: 18, b: 40, l: 52 };
-  const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const lx = (c) => m.l + (Math.log2(c) / Math.log2(128)) * iw;   // log2 x for C
+  var root = document.documentElement;
 
-  function frame(mount) {
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
-    mount.appendChild(svg); return svg;
+  /* ---- Theme: Auto / Light / Dark, persisted ---- */
+  var btns = Array.prototype.slice.call(document.querySelectorAll("[data-theme-set]"));
+  function applyTheme(mode) {
+    if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+    else root.removeAttribute("data-theme");
+    btns.forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-theme-set") === mode ? "true" : "false"); });
   }
-  function xticks(svg, yb) {
-    data.C.forEach((c) => {
-      const x = lx(c);
-      svg.appendChild(el("text", { x, y: yb + 22, class: "axlab", "text-anchor": "middle" })).textContent = c;
+  var saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (e) {}
+  applyTheme(saved || "auto");
+  btns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      var mode = b.getAttribute("data-theme-set");
+      try { if (mode === "auto") localStorage.removeItem("theme"); else localStorage.setItem("theme", mode); } catch (e) {}
+      applyTheme(mode);
     });
-  }
-  function yaxis(svg, ymin, ymax, fmt) {
-    const ticks = 4;
-    for (let i = 0; i <= ticks; i++) {
-      const v = ymin + (ymax - ymin) * i / ticks;
-      const y = m.t + ih - (ih * i / ticks);
-      svg.appendChild(el("line", { x1: m.l, y1: y, x2: m.l + iw, y2: y, class: "grid" }));
-      svg.appendChild(el("text", { x: m.l - 8, y: y + 4, class: "axlab", "text-anchor": "end" })).textContent = fmt(v);
-    }
-  }
-  function linePath(vals, ymin, ymax) {
-    return vals.map((v, i) => {
-      const x = lx(data.C[i]);
-      const y = m.t + ih - ((v - ymin) / (ymax - ymin)) * ih;
-      return (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
-    }).join(" ");
-  }
-  function pt(vals, i, ymin, ymax) {
-    return [lx(data.C[i]), m.t + ih - ((vals[i] - ymin) / (ymax - ymin)) * ih];
+  });
+
+  /* ---- Mobile TOC: close the native details menu after a jump ---- */
+  var tocm = document.querySelector(".toc-m");
+  if (tocm) {
+    var mm = document.getElementById("toc-mobile");
+    if (mm) mm.addEventListener("click", function (e) { if (e.target.closest("a")) tocm.removeAttribute("open"); });
   }
 
-  // 1 — throughput
-  (function () {
-    const svg = frame(document.getElementById("c-throughput"));
-    yaxis(svg, 0, 900, (v) => Math.round(v));
-    xticks(svg, m.t + ih);
-    svg.appendChild(el("path", { d: linePath(data.tps, 0, 900), fill: "none", stroke: css("--gpu"), "stroke-width": 2.5, "stroke-linejoin": "round" }));
-    data.tps.forEach((v, i) => {
-      const [x, y] = pt(data.tps, i, 0, 900);
-      const peak = data.C[i] === 64;
-      svg.appendChild(el("circle", { cx: x, cy: y, r: peak ? 6 : 3.4, fill: peak ? css("--gpu") : css("--panel"), stroke: css("--gpu"), "stroke-width": 2 }));
-      if (peak) {
-        svg.appendChild(el("text", { x: x, y: y - 14, class: "dotlab", "text-anchor": "middle", "font-weight": "700" })).textContent = "802 @ C=64";
-      }
+  /* ---- Scrollspy via IntersectionObserver (static anchors are the fallback) ---- */
+  if ("IntersectionObserver" in window) {
+    var links = {};
+    Array.prototype.slice.call(document.querySelectorAll("[data-toc]")).forEach(function (a) {
+      (links[a.getAttribute("data-toc")] = links[a.getAttribute("data-toc")] || []).push(a);
     });
-    [96,128].forEach((c) => { const i = data.C.indexOf(c); const [x, y] = pt(data.tps, i, 0, 900);
-      svg.appendChild(el("text", { x, y: y - 12, class: "dotlab", "text-anchor": "middle", fill: css("--cpu") })).textContent = "↓" + Math.round(data.tps[i]); });
-    svg.appendChild(el("text", { x: m.l - 40, y: m.t - 4, class: "axlab" })).textContent = "tok/s";
-    svg.appendChild(el("text", { x: m.l + iw, y: m.t + ih + 36, class: "axlab", "text-anchor": "end" })).textContent = "concurrency C (log)";
-  })();
-
-  // 2 — crossover, dual axis
-  (function () {
-    const svg = frame(document.getElementById("c-crossover"));
-    yaxis(svg, 0, 100, (v) => Math.round(v));
-    xticks(svg, m.t + ih);
-    svg.appendChild(el("path", { d: linePath(data.gpu, 0, 100), fill: "none", stroke: css("--gpu"), "stroke-width": 2.5, "stroke-linejoin": "round" }));
-    svg.appendChild(el("path", { d: linePath(data.cpu, 0, 100), fill: "none", stroke: css("--cpu"), "stroke-width": 2.5, "stroke-linejoin": "round" }));
-    data.gpu.forEach((v, i) => { const [x, y] = pt(data.gpu, i, 0, 100); svg.appendChild(el("circle", { cx: x, cy: y, r: 3, fill: css("--gpu") })); });
-    data.cpu.forEach((v, i) => { const [x, y] = pt(data.cpu, i, 0, 100); svg.appendChild(el("circle", { cx: x, cy: y, r: 3, fill: css("--cpu") })); });
-    const gi = data.C.indexOf(1), ci = data.C.indexOf(128);
-    let p = pt(data.gpu, gi, 0, 100); svg.appendChild(el("text", { x: p[0] + 6, y: p[1] - 8, class: "dotlab", fill: css("--gpu") })).textContent = "94%";
-    p = pt(data.cpu, ci, 0, 100); svg.appendChild(el("text", { x: p[0], y: p[1] - 10, class: "dotlab", "text-anchor": "end", fill: css("--cpu") })).textContent = "29%";
-    svg.appendChild(el("text", { x: m.l - 40, y: m.t - 4, class: "axlab" })).textContent = "%";
-  })();
-
-  // 3 — VRAM linear
-  (function () {
-    const svg = frame(document.getElementById("c-vram"));
-    yaxis(svg, 0, 18000, (v) => (v/1000).toFixed(0) + "k");
-    xticks(svg, m.t + ih);
-    // fit line 108.07*slots + 3475.6
-    const fit = data.C.map((c) => 108.07 * c + 3475.6);
-    svg.appendChild(el("path", { d: linePath(fit, 0, 18000), fill: "none", stroke: css("--faint"), "stroke-width": 1.4, "stroke-dasharray": "5 4" }));
-    data.vram.forEach((v, i) => { const [x, y] = pt(data.vram, i, 0, 18000); svg.appendChild(el("circle", { cx: x, cy: y, r: 3.6, fill: css("--gpu") })); });
-    svg.appendChild(el("text", { x: m.l + iw, y: m.t + 14, class: "dotlab", "text-anchor": "end", fill: css("--muted") })).textContent = "108.07 MiB/slot · R²=1.00000";
-    svg.appendChild(el("text", { x: m.l - 40, y: m.t - 4, class: "axlab" })).textContent = "MiB";
-  })();
-
-  // 4 — decode by quant (bars)
-  (function () {
-    const svg = frame(document.getElementById("c-quant"));
-    const n = data.quantTps.length, bw = iw / n * 0.6, gap = iw / n;
-    yaxis(svg, 0, 180, (v) => Math.round(v));
-    data.quantTps.forEach((v, i) => {
-      const x = m.l + gap * i + (gap - bw) / 2;
-      const h = (v / 180) * ih, y = m.t + ih - h;
-      const c = i === 0 ? css("--gpu") : (i === n - 1 ? css("--cpu") : css("--gpu"));
-      const bar = el("rect", { x, y, width: bw, height: h, rx: 4, fill: c, opacity: i === 0 || i === n - 1 ? 1 : 0.55 });
-      svg.appendChild(bar);
-      svg.appendChild(el("text", { x: x + bw / 2, y: y - 7, class: "dotlab", "text-anchor": "middle" })).textContent = v.toFixed(0);
-      svg.appendChild(el("text", { x: x + bw / 2, y: m.t + ih + 20, class: "axlab", "text-anchor": "middle" })).textContent = data.quantLabel[i];
-    });
-    svg.appendChild(el("text", { x: m.l - 40, y: m.t - 4, class: "axlab" })).textContent = "tok/s";
-  })();
-
-  // reveal on scroll
-  if (matchMedia("(prefers-reduced-motion: no-preference)").matches && "IntersectionObserver" in window) {
-    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { threshold: 0.12 });
-    document.querySelectorAll(".reveal").forEach((n) => io.observe(n));
-  } else {
-    document.querySelectorAll(".reveal").forEach((n) => n.classList.add("in"));
+    var visible = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting ? e.intersectionRatio : 0; });
+      var best = null, bestR = 0;
+      Object.keys(visible).forEach(function (id) { if (visible[id] > bestR) { bestR = visible[id]; best = id; } });
+      Object.keys(links).forEach(function (id) {
+        links[id].forEach(function (a) {
+          if (id === best) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current");
+        });
+      });
+    }, { rootMargin: "-64px 0px -55% 0px", threshold: [0, 0.25, 0.5, 1] });
+    Array.prototype.slice.call(document.querySelectorAll("main section[id]")).forEach(function (s) { io.observe(s); });
   }
 })();
 </script>
+
+</body>
+</html>

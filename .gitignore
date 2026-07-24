@@ -70,8 +70,10 @@ scripts/__pycache__/
 # Transient scratch files (council/audit prompts + outputs)
 scratch_*
 
-# Multi-GPU benchmark runs: commit the derived evidence bundle (benchmark JSON,
-# summaries, per-GPU telemetry CSV, manifests); keep raw server logs and
-# throwaway smoke runs local.
-/results/smoke-*/
-results/**/server*.log
+# Benchmark run outputs are regenerated locally. The existing tracked study
+# dirs under results/ stay committed; NEW runs are ignored (gitignore does not
+# untrack already-committed files).
+/results/
+# Prompt corpora are deterministic — regenerate with `./run.sh corpus` (short-chat)
+# and `./run.sh shapes` (prefill/decode). Kept out of git (6.9 MB).
+/prompts/*.jsonl

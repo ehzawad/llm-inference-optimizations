@@ -3,11 +3,13 @@
 
 Domain matches the adapter (legal contract-intake ops) and is benign. Each
 prompt carries a unique nonce so prompt caching cannot silently dedupe them.
-Committed to prompts/short-chat.jsonl for reproducibility.
+Regenerated into prompts/short-chat.jsonl on demand (the file is git-ignored;
+deterministic by index, so the same command reproduces it byte-for-byte).
 
 Usage: make_corpus.py <out_jsonl> <count>
 """
 import json
+import os
 import sys
 
 out_path = sys.argv[1]
@@ -56,6 +58,7 @@ def build_prompt(i: int) -> str:
     )
 
 
+os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 with open(out_path, "w", encoding="utf-8") as f:
     for i in range(count):
         f.write(json.dumps({"id": i, "prompt": build_prompt(i)}) + "\n")
