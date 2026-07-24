@@ -92,7 +92,7 @@ llama_cmd(){ # $1=cuda_visible $2=port
     "$1" "$BIN/llama-server" "$GGUF" "$ALIAS" "$2" "$NP" "$LLAMA_CTX"
 }
 vllm_cmd(){ # $1=cuda_visible $2=port
-  printf 'CUDA_VISIBLE_DEVICES=%s setsid %s serve %s --served-model-name %s --host 127.0.0.1 --port %s --dtype bfloat16 --tensor-parallel-size %s --max-model-len %s --max-num-seqs %s --gpu-memory-utilization %s --no-enable-prefix-caching --disable-log-requests' \
+  printf 'CUDA_VISIBLE_DEVICES=%s setsid %s serve %s --served-model-name %s --host 127.0.0.1 --port %s --dtype bfloat16 --tensor-parallel-size %s --max-model-len %s --max-num-seqs %s --gpu-memory-utilization %s --no-enable-prefix-caching' \
     "$1" "$VLLM" "$MERGED" "$ALIAS" "$2" "$TP" "$VLLM_MAXLEN" "$NP" "$GPU_MEM_UTIL"
 }
 server_cmd(){ # $1=cuda_visible $2=port
