@@ -14,7 +14,15 @@ BIN="$ROOT/vendor/llama.cpp/build/bin"
 PROMPTS="$ROOT/prompts/short-chat.jsonl"
 RUN="${1:-$ROOT/results/sweep-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$RUN"
-python3 scripts/capture_env.py "$RUN/manifest.json" >/dev/null
+fail=0
+# Guarded under `set -e`: an environment-capture failure must not abort the
+# sweep -- collect the remaining diagnostics, then fail at the end.
+if ! python3 scripts/capture_env.py "$RUN/manifest.json" >/dev/null; then
+  echo "### environment capture FAILED; continuing ###" >&2
+  fail=1
+fi
+# Authoritative per-tag request expectations mirror meas_for() below so the
+# report validates the CONFIGURED sample count, not each artifact's self-report.
 cat > "$RUN/experiment.json" <<'JSON'
 {
   "benchmark": {
@@ -22,7 +30,12 @@ cat > "$RUN/experiment.json" <<'JSON'
     "expected_tags": [
       "c001", "c002", "c004", "c008", "c016", "c024",
       "c032", "c048", "c064", "c096", "c128", "c032b"
-    ]
+    ],
+    "expected_requests_by_tag": {
+      "c001": 60, "c002": 80, "c004": 120, "c008": 160,
+      "c016": 160, "c024": 240, "c032": 320, "c048": 480,
+      "c064": 640, "c096": 960, "c128": 1280, "c032b": 320
+    }
   }
 }
 JSON
@@ -35,7 +48,6 @@ meas_for() { local c=$1
   elif [ "$c" -le 8 ]; then echo 20
   else echo 10; fi; }
 
-fail=0
 run_point() {
   local c=$1 tag=$2 ctx=$(( $1 * 768 )) m; m=$(meas_for "$1")
   # abort the point if an unexpected process already holds GPU0

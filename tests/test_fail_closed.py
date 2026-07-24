@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -88,27 +89,51 @@ class ReportTests(unittest.TestCase):
             self.assertFalse((run_dir / "summary.md").exists())
 
     def test_failed_point_is_labeled_and_excluded(self) -> None:
+        # A valid C=1 baseline plus a failed C=24 point. Because a valid baseline
+        # exists, the scaling table IS emitted -- so this genuinely proves the
+        # failed point's throughput is absent from scaling, not merely that the
+        # table was suppressed for lack of a baseline.
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
-            row = valid_row(concurrency=24, measured=10)
-            row.update({
+            base = valid_row(concurrency=1, measured=10)
+            base["output_tokens_per_s"] = 100.0
+            (run_dir / "benchmark-c001.json").write_text(json.dumps(base), encoding="utf-8")
+
+            failed = valid_row(concurrency=24, measured=10)
+            failed.update({
                 "requests_ok": 239,
                 "requests_failed": 1,
                 "completion_tokens_total": 239 * 256,
                 "server_predicted_tokens_delta": float(240 * 256),
+                "output_tokens_per_s": 9999.0,  # distinctive; must NOT reach scaling
                 "ok": False,
             })
-            (run_dir / "benchmark-c024.json").write_text(json.dumps(row), encoding="utf-8")
+            (run_dir / "benchmark-c024.json").write_text(json.dumps(failed), encoding="utf-8")
+
+            (run_dir / "experiment.json").write_text(
+                json.dumps({
+                    "benchmark": {
+                        "concurrency_points": [1, 24],
+                        "expected_tags": ["c001", "c024"],
+                        "measured_per_worker": 10,
+                    }
+                }),
+                encoding="utf-8",
+            )
 
             completed = self.invoke_report(run_dir)
             self.assertEqual(completed.returncode, 2)
             markdown = (run_dir / "summary.md").read_text(encoding="utf-8")
             self.assertIn("Run status: **FAILED / PARTIAL**", markdown)
             self.assertIn("| 24 | FAIL |", markdown)
-            self.assertNotIn("## Throughput scaling", markdown)
+            # The scaling section exists (valid C=1 baseline) but excludes C=24.
+            self.assertIn("## Throughput scaling", markdown)
+            scaling = markdown.split("## Throughput scaling", 1)[1]
+            self.assertNotIn("9999", scaling)
             summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-            self.assertFalse(summary[0]["ok"])
-            self.assertTrue(summary[0]["failure_reasons"])
+            failed_entry = next(item for item in summary if item["concurrency"] == 24)
+            self.assertFalse(failed_entry["ok"])
+            self.assertTrue(failed_entry["failure_reasons"])
 
     def test_valid_run_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,6 +172,125 @@ class ReportTests(unittest.TestCase):
             markdown = (run_dir / "summary.md").read_text(encoding="utf-8")
             self.assertIn("Missing expected concurrency point(s): 30", markdown)
             self.assertIn("Missing expected benchmark tag(s): `c030`", markdown)
+
+    def _write_run(self, run_dir: Path, row: dict, spec: dict) -> None:
+        tag = row.get("tag", "c001")
+        (run_dir / f"benchmark-{tag}.json").write_text(json.dumps(row), encoding="utf-8")
+        (run_dir / "experiment.json").write_text(json.dumps({"benchmark": spec}), encoding="utf-8")
+
+    def test_report_requires_experiment_spec_by_default(self) -> None:
+        # D3: a run directory without experiment.json must not certify as PASS.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "benchmark-c001.json").write_text(
+                json.dumps(valid_row()), encoding="utf-8"
+            )
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("experiment.json", completed.stderr)
+            self.assertFalse((run_dir / "summary.md").exists())
+
+            # The escape hatch is explicit and opt-in.
+            override = run(
+                sys.executable, str(SCRIPTS / "report.py"), str(run_dir),
+                "--allow-missing-spec", cwd=REPO,
+            )
+            self.assertEqual(override.returncode, 0, override.stderr)
+            self.assertIn("Run status: **PASS**", (run_dir / "summary.md").read_text("utf-8"))
+
+    def test_report_uses_authoritative_measured_not_self_report(self) -> None:
+        # D4: the artifact self-reports measured=1 with a single request, but the
+        # spec's authoritative measured_per_worker=20 must be enforced.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=1, measured=1)  # self-reports 1 request
+            self._write_run(run_dir, row, {
+                "concurrency_points": [1],
+                "expected_tags": ["c001"],
+                "measured_per_worker": 20,
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+            summary = json.loads((run_dir / "summary.json").read_text("utf-8"))
+            self.assertIn("expected 20", " ".join(summary[0]["failure_reasons"]))
+
+    def test_report_honors_per_tag_request_expectations(self) -> None:
+        # D4: fine-sweep style per-tag expectations override self-report too.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=32, measured=10)  # self-reports 320
+            row["tag"] = "c032b"
+            self._write_run(run_dir, row, {
+                "concurrency_points": [32],
+                "expected_tags": ["c032b"],
+                "expected_requests_by_tag": {"c032b": 999},  # deliberately unmet
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+            summary = json.loads((run_dir / "summary.json").read_text("utf-8"))
+            self.assertIn("expected 999", " ".join(summary[0]["failure_reasons"]))
+
+    def test_report_fails_when_advertised_counter_delta_missing(self) -> None:
+        # D2: a run that selected a server metric family but has no delta fails.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=1, measured=2)
+            row.pop("server_predicted_tokens_delta", None)
+            row["server_generated_tokens_metric"] = "vllm:generation_tokens_total"
+            row["server_generated_tokens_delta"] = None
+            self._write_run(run_dir, row, {
+                "concurrency_points": [1], "expected_tags": ["c001"], "measured_per_worker": 2,
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("| 1 | FAIL |", (run_dir / "summary.md").read_text("utf-8"))
+
+    def test_report_fails_on_server_counter_mismatch_flag(self) -> None:
+        # D2: an explicit server_counter_matches_client=false must fail the row.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=1, measured=2)
+            row["server_generated_tokens_delta"] = float(1 * 2 * 256)
+            row["server_counter_matches_client"] = False
+            self._write_run(run_dir, row, {
+                "concurrency_points": [1], "expected_tags": ["c001"], "measured_per_worker": 2,
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+
+    def test_report_passes_when_no_server_counter_advertised(self) -> None:
+        # D2 guard against over-failing: a run with genuinely no server counter
+        # (metrics unavailable) is unverified but must not be rejected outright.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=1, measured=2)
+            row.pop("server_predicted_tokens_delta", None)  # no counter at all
+            self._write_run(run_dir, row, {
+                "concurrency_points": [1], "expected_tags": ["c001"], "measured_per_worker": 2,
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("Run status: **PASS**", (run_dir / "summary.md").read_text("utf-8"))
+
+    def test_report_rejects_boolean_counts_and_nan_tokens(self) -> None:
+        # D7: JSON booleans must not satisfy integer counts, and a non-finite
+        # token delta must not slip through the numeric comparison.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            row = valid_row(concurrency=1, measured=1)
+            row["requests_ok"] = True          # bool masquerading as the count 1
+            row["requests_failed"] = False     # bool masquerading as 0
+            row["server_predicted_tokens_delta"] = float("nan")
+            self._write_run(run_dir, row, {
+                "concurrency_points": [1], "expected_tags": ["c001"], "measured_per_worker": 1,
+            })
+            completed = self.invoke_report(run_dir)
+            self.assertEqual(completed.returncode, 2)
+            summary = json.loads((run_dir / "summary.json").read_text("utf-8"))
+            reasons = " ".join(summary[0]["failure_reasons"])
+            self.assertIn("requests_ok", reasons)
+            self.assertIn("requests_failed", reasons)
+            self.assertIn("finite", reasons)
 
 
 class ExternalHarnessTests(unittest.TestCase):
@@ -203,6 +347,35 @@ class ExternalHarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "prompt corpus is empty"):
                 bench_external.load_prompts(path)
 
+    def test_corpus_error_writes_structured_failure_artifact(self) -> None:
+        # D7: a setup failure (empty corpus) happens before any request, but the
+        # point must still leave a structured ok:false artifact behind, so an
+        # aborted point is never silently absent from the run directory.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus = root / "empty.jsonl"
+            corpus.write_text("", encoding="utf-8")
+            outdir = root / "out"
+            completed = run(
+                sys.executable,
+                str(SCRIPTS / "bench_external.py"),
+                "--url", "http://127.0.0.1:1",
+                "--engine", "vllm",
+                "--concurrency", "1",
+                "--outdir", str(outdir),
+                "--tag", "vllm-c001",
+                "--prompts", str(corpus),
+                "--measured", "1",
+                "--warmup", "0",
+                cwd=REPO,
+            )
+            self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+            artifact = outdir / "benchmark-vllm-c001.json"
+            self.assertTrue(artifact.exists(), "no structured failure artifact was written")
+            data = json.loads(artifact.read_text("utf-8"))
+            self.assertFalse(data["ok"])
+            self.assertEqual(data["error_type"], "SetupError")
+
 
 class ProvenanceTests(unittest.TestCase):
     @staticmethod
@@ -248,29 +421,72 @@ class ProvenanceTests(unittest.TestCase):
             self.assertEqual(commit_after, commit)
             self.assertTrue(dirty_after)
 
+    def test_git_dir_override_cannot_redirect_provenance(self) -> None:
+        # D5: GIT_DIR / GIT_WORK_TREE must not let provenance record another
+        # repository's clean commit for a directory that is not itself a repo.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+
+            # A real, committed decoy repository we try to leak in via GIT_DIR.
+            other = base / "other-repo"
+            (other / "scripts").mkdir(parents=True)
+            (other / "file.txt").write_text("decoy\n", encoding="utf-8")
+            for cmd in (
+                ("git", "init", "-q"),
+                ("git", "config", "user.name", "ehzawad"),
+                ("git", "config", "user.email", "test@example.invalid"),
+                ("git", "add", "."),
+                ("git", "commit", "-qm", "decoy"),
+            ):
+                self.assertEqual(run(*cmd, cwd=other).returncode, 0)
+            decoy_head = run("git", "rev-parse", "HEAD", cwd=other).stdout.strip()
+
+            # The run's actual root: NOT a git repository.
+            root = base / "run-root"
+            (root / "scripts").mkdir(parents=True)
+            script = root / "scripts" / "capture_env.py"
+            script.write_text(
+                (SCRIPTS / "capture_env.py").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            module = self.load_capture(script)
+
+            override = {
+                "GIT_DIR": str(other / ".git"),
+                "GIT_WORK_TREE": str(other),
+            }
+            with unittest.mock.patch.dict(os.environ, override):
+                # Control: plain git honours the override and WOULD leak the decoy.
+                leaked = run("git", "rev-parse", "HEAD", cwd=root).stdout.strip()
+                self.assertEqual(leaked, decoy_head)
+                # The hardened provenance ignores the override entirely.
+                commit, dirty = module.git_provenance(root)
+            self.assertEqual((commit, dirty), (None, None))
+
 
 class ShellOrchestratorTests(unittest.TestCase):
-    def make_fake_tools(self, root: Path) -> tuple[Path, Path]:
+    def make_fake_tools(self, root: Path, capture_exit: int = 0) -> tuple[Path, Path]:
         fake_bin = root / "fake-bin"
         fake_bin.mkdir()
         log = root / "calls.log"
 
         python = fake_bin / "python3"
         python.write_text(
-            """#!/usr/bin/env bash
-set -u
-echo "$*" >> "$FAKE_CALL_LOG"
-if [[ "$*" == *"scripts/benchmark.py"* && "$*" == *"--tag c030"* ]]; then
-  exit 2
-fi
-if [[ "$*" == *"scripts/benchmark.py"* && "$*" == *"--tag c024"* ]]; then
-  exit 2
-fi
-if [[ "$*" == *"scripts/bench_external.py"* && "$*" == *"-c016"* ]]; then
-  exit 2
-fi
-exit 0
-""",
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            'echo "$*" >> "$FAKE_CALL_LOG"\n'
+            'if [[ "$*" == *"scripts/capture_env.py"* ]]; then\n'
+            f"  exit {capture_exit}\n"
+            "fi\n"
+            'if [[ "$*" == *"scripts/benchmark.py"* && "$*" == *"--tag c030"* ]]; then\n'
+            "  exit 2\n"
+            "fi\n"
+            'if [[ "$*" == *"scripts/benchmark.py"* && "$*" == *"--tag c024"* ]]; then\n'
+            "  exit 2\n"
+            "fi\n"
+            'if [[ "$*" == *"scripts/bench_external.py"* && "$*" == *"-c016"* ]]; then\n'
+            "  exit 2\n"
+            "fi\n"
+            "exit 0\n",
             encoding="utf-8",
         )
         python.chmod(0o755)
@@ -345,6 +561,77 @@ exit 0
             self.assertIn("--tag c128", calls)
             self.assertIn("--tag c032b", calls)
             self.assertIn("scripts/report.py", calls)
+
+    def test_env_capture_failure_continues_and_fails_run(self) -> None:
+        # D6: capture_env failure under `set -e` must NOT abort run.sh benchmark;
+        # the benchmark points and the report still run, and the run fails at end.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin, log = self.make_fake_tools(root, capture_exit=7)
+            output = root / "run"
+            completed = run(
+                "bash", "run.sh", "benchmark", str(output),
+                cwd=REPO, env=self.fake_env(fake_bin, log),
+            )
+            self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("scripts/capture_env.py", calls)
+            self.assertIn("--tag c001", calls)
+            self.assertIn("--tag c100", calls)  # continued past failed capture
+            self.assertIn("scripts/report.py", calls)
+
+    def test_env_capture_failure_continues_and_fails_sweep(self) -> None:
+        # D6: same guarantee for the fine sweep.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin, log = self.make_fake_tools(root, capture_exit=7)
+            output = root / "sweep"
+            completed = run(
+                "bash", "scripts/sweep_concurrency.sh", str(output),
+                cwd=REPO, env=self.fake_env(fake_bin, log),
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("scripts/capture_env.py", calls)
+            self.assertIn("--tag c001", calls)
+            self.assertIn("--tag c128", calls)  # full sweep ran despite capture failure
+            self.assertIn("scripts/report.py", calls)
+
+    def test_engine_fair_enables_sglang_metrics(self) -> None:
+        # D1: the SGLang server must actually be launched with --enable-metrics,
+        # verified against the command the wrapper truly execs (not its source).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin, log = self.make_fake_tools(root)
+            env = self.fake_env(fake_bin, log)
+            env.update({"CLIENTS": "1", "MEASURED": "1", "WARMUP": "0"})
+            completed = run(
+                "bash", "scripts/engine_fair.sh", str(root / "ef"), "sglang",
+                cwd=REPO, env=env,
+            )
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("sglang.launch_server", calls)
+            self.assertIn("--enable-metrics", calls)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_engine_compare_continues_past_failed_point(self) -> None:
+        # Behavioral continue-through for engine_compare.sh (previously only
+        # covered by source-string checks): a middle failing point does not stop
+        # the sweep, and the wrapper exits non-zero.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin, log = self.make_fake_tools(root)
+            env = self.fake_env(fake_bin, log)
+            env.update({"CLIENTS": "1 16 30", "MEASURED": "1", "WARMUP": "0"})
+            completed = run(
+                "bash", "scripts/engine_compare.sh", str(root / "ec"),
+                cwd=REPO, env=env,
+            )
+            self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("--tag llamacpp-c001", calls)
+            self.assertIn("--tag llamacpp-c016", calls)  # the injected failure
+            self.assertIn("--tag llamacpp-c030", calls)  # ran after the failure
 
     def test_engine_fair_propagates_client_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

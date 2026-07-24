@@ -272,11 +272,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.warmup < 0:
         parser.error("--warmup must be non-negative")
 
-    try:
-        prompts = load_prompts(Path(args.prompts))
-    except ValueError as exc:
-        parser.error(str(exc))
-
     base = args.url.rstrip("/") + "/"
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -292,6 +287,17 @@ def main(argv: list[str] | None = None) -> int:
         "requests_expected": expected_measured,
         "ok": False,
     }
+
+    # Corpus/setup errors happen before any request; still emit a structured
+    # failure artifact so an aborted point is never silently absent from the run.
+    try:
+        prompts = load_prompts(Path(args.prompts))
+    except ValueError as exc:
+        result.update({"ok": False, "error_type": "SetupError", "error": str(exc)})
+        write_result(result_path, result)
+        print(f"[ext] ERROR: {exc}", file=sys.stderr)
+        print(f"[ext] wrote failure artifact {result_path}", file=sys.stderr)
+        return 2
 
     telemetry = Telemetry(str(outdir / f"telemetry-{args.tag}.csv"))
     telemetry_started = False

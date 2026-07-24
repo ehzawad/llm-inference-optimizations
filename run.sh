@@ -39,7 +39,12 @@ benchmark() {
   local run="${1:-$ROOT/results/a5000-$(date -u +%Y%m%dT%H%M%SZ)}"
   local failed=0
   mkdir -p "$run"
-  python3 scripts/capture_env.py "$run/manifest.json"
+  # Guarded under `set -e`: an environment-capture failure must not abort the
+  # whole run -- collect the remaining diagnostics, then fail at the end.
+  if ! python3 scripts/capture_env.py "$run/manifest.json"; then
+    echo "== environment capture FAILED; continuing ==" >&2
+    failed=1
+  fi
   cp config/experiment.json "$run/experiment.json"
   # concurrency -> total ctx (768 tokens/slot, --no-kv-unified)
   for c in 1 30 100; do
