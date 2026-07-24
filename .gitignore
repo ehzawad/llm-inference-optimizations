@@ -69,3 +69,7 @@ scripts/__pycache__/
 
 # Transient scratch files (council/audit prompts + outputs)
 scratch_*
+
+# Multi-GPU benchmark run trees (raw artifacts kept local; numbers live in REPORT-MULTIGPU.md)
+/results/matrix-*/
+/results/smoke-*/
