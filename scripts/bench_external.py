@@ -142,6 +142,8 @@ def run_phase(
     bases = [base] if isinstance(base, str) else list(base)
     counter = {"i": 0}
     counter_lock = threading.Lock()
+    outstanding = [0] * len(bases)
+    dispatch_lock = threading.Lock()
     sink: list[dict[str, Any]] = []
     barrier = threading.Barrier(concurrency)
 
@@ -151,6 +153,23 @@ def run_phase(
             counter["i"] += 1
         return i
 
+    def acquire_base() -> int:
+        # Join-shortest-queue: dispatch each request to the replica with the
+        # fewest in-flight requests. On a heterogeneous data-parallel pair this
+        # lets the faster card (A6000) pull more of the load instead of being
+        # held to the slower card's request count -- so the measured 2-GPU
+        # aggregate reflects a real least-connections router, not a pessimistic
+        # static round-robin. Ties break to the lowest index, so a single-URL
+        # (non-DP) run always selects bases[0] and is unaffected.
+        with dispatch_lock:
+            j = min(range(len(bases)), key=lambda k: outstanding[k])
+            outstanding[j] += 1
+        return j
+
+    def release_base(j: int) -> None:
+        with dispatch_lock:
+            outstanding[j] -= 1
+
     def worker() -> None:
         try:
             barrier.wait()
@@ -159,12 +178,17 @@ def run_phase(
             return
         for _ in range(per_worker):
             i = next_index()
-            target = bases[i % len(bases)]
+            j = acquire_base()
+            target = bases[j]
             prompt = prompts[i % len(prompts)]
             try:
                 result = do_request(target, prompt, max_tokens)
             except Exception as exc:  # keep thread failures visible in the artifact
                 result = failed_request(exc)
+            finally:
+                release_base(j)
+            if isinstance(result, dict):
+                result.setdefault("base", target)  # per-replica accounting for DP balance audit
             sink.append(result)
 
     threads = [threading.Thread(target=worker) for _ in range(concurrency)]
