@@ -378,30 +378,55 @@ class ExternalHarnessTests(unittest.TestCase):
             self.assertFalse(data["ok"])
             self.assertEqual(data["error_type"], "SetupError")
 
-    def test_run_phase_round_robins_across_replicas(self) -> None:
-        # Data-parallel: a list of replica URLs must be round-robined evenly so
-        # both cards receive a balanced share of the offered load.
-        seen: list[str] = []
+    def test_run_phase_load_balances_across_replicas(self) -> None:
+        # Data-parallel dispatch is join-shortest-queue, not static round-robin:
+        # with equal-speed replicas the offered load splits ~evenly; with a
+        # faster replica, it receives strictly MORE (so a fast A6000 is not held
+        # back to the slow A5000's request count). This is the M1 fix.
+        import time
 
-        def record(base: str, _prompt: str, max_tokens: int = 256):
-            seen.append(base)
-            return {"ok": True, "completion_tokens": max_tokens,
-                    "ttft": 0.1, "latency": 1.0, "t_start": 0.0, "t_end": 1.0}
+        def make_recorder(delays):
+            seen: list[str] = []
+
+            def record(base: str, _prompt: str, max_tokens: int = 256):
+                seen.append(base)               # append is atomic under the GIL
+                time.sleep(delays[base])        # simulate in-flight service time
+                return {"ok": True, "completion_tokens": max_tokens,
+                        "ttft": 0.01, "latency": 0.05, "t_start": 0.0, "t_end": 1.0}
+
+            return record, seen
 
         original = bench_external.do_request
-        bench_external.do_request = record
+
+        # Equal-speed replicas -> load splits ~evenly.
+        rec, seen = make_recorder({"http://a/": 0.005, "http://b/": 0.005})
+        bench_external.do_request = rec
         try:
             records = bench_external.run_phase(
                 ["http://a/", "http://b/"], ["p0", "p1"],
-                concurrency=4, per_worker=4, max_tokens=128,
+                concurrency=4, per_worker=6, max_tokens=64,
             )
         finally:
             bench_external.do_request = original
-
-        self.assertEqual(len(records), 16)
+        self.assertEqual(len(records), 24)
         counts = Counter(seen)
         self.assertEqual(set(counts), {"http://a/", "http://b/"})
-        self.assertEqual(counts["http://a/"], counts["http://b/"])  # 8 / 8
+        self.assertLessEqual(abs(counts["http://a/"] - counts["http://b/"]), 4)
+        # every record is tagged with the replica that served it (DP balance audit)
+        self.assertTrue(all(r.get("base") in {"http://a/", "http://b/"} for r in records))
+
+        # Heterogeneous replicas -> the faster one gets strictly more load.
+        rec, seen = make_recorder({"http://slow/": 0.02, "http://fast/": 0.002})
+        bench_external.do_request = rec
+        try:
+            bench_external.run_phase(
+                ["http://slow/", "http://fast/"], ["p0", "p1"],
+                concurrency=4, per_worker=8, max_tokens=64,
+            )
+        finally:
+            bench_external.do_request = original
+        counts = Counter(seen)
+        self.assertGreater(counts["http://fast/"], counts["http://slow/"])
 
     def test_decode_rate_isolates_decode_window(self) -> None:
         # (gen-1)/(latency-ttft): a clean decode-throughput proxy distinct from
