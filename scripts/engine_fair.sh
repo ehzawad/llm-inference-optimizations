@@ -157,7 +157,9 @@ run_sglang(){
   # --enable-metrics: SGLang 0.5.15 defaults enable_metrics=False, so without
   # this /metrics is absent, the server token counter is None, and the client's
   # cross-check silently no-ops. Enable it so SGLang is cross-checked like the
-  # others (this wrapper is kept correct even though SGLang is not benchmarked).
+  # others. This path produced the SGLang column in REPORT.md §5
+  # (results/enginefair-20260721T062947Z/). Re-running it needs .venv-sglang
+  # rebuilt per requirements/harness.txt; the guard above fails closed without it.
   setsid "$sg" -m sglang.launch_server --model-path "$MERGED" --served-model-name "$ALIAS" \
     --host 127.0.0.1 --port "$PORT" --dtype bfloat16 --context-length 1024 \
     --max-running-requests 100 --disable-radix-cache --disable-cuda-graph \
