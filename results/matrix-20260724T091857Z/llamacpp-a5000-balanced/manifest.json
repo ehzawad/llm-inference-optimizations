@@ -1,0 +1,23 @@
+{
+  "gpu_query": "NVIDIA RTX A5000, GPU-3ce8e4c2-3bae-8744-eeec-70e8a0437567, 24564, 230.00, 610.43.02, 3, 16",
+  "cuda_umd": "610.43.02",
+  "nvcc": "Build cuda_13.2.r13.2/compiler.37668154_0",
+  "cmake": "cmake version 3.22.1",
+  "kernel": "5.15.0-58-generic",
+  "cpu_model": "Intel(R) Xeon(R) Silver 4210R CPU @ 2.40GHz",
+  "cpu_threads": "40",
+  "ram_gib": "125",
+  "python": "3.14.6",
+  "packages": {
+    "torch": null,
+    "transformers": null,
+    "peft": null,
+    "safetensors": null,
+    "huggingface_hub": null,
+    "numpy": "2.5.1",
+    "requests": "2.34.2"
+  },
+  "llama_cpp_commit": "91d2fc387529940230555abd297a8b5e99737d3f",
+  "source_git_commit": "ccc1cdce92d1aaddaac6707653d9abece9468c5f",
+  "source_dirty": false
+}

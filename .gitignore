@@ -70,6 +70,8 @@ scripts/__pycache__/
 # Transient scratch files (council/audit prompts + outputs)
 scratch_*
 
-# Multi-GPU benchmark run trees (raw artifacts kept local; numbers live in REPORT-MULTIGPU.md)
-/results/matrix-*/
+# Multi-GPU benchmark runs: commit the derived evidence bundle (benchmark JSON,
+# summaries, per-GPU telemetry CSV, manifests); keep raw server logs and
+# throwaway smoke runs local.
 /results/smoke-*/
+results/**/server*.log

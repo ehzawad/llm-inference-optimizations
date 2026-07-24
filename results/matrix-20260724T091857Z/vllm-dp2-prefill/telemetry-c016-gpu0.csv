@@ -1,0 +1,27 @@
+timestamp, pstate, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw.instant [W], power.limit [W], temperature.gpu, utilization.gpu [%], utilization.memory [%], memory.used [MiB], pcie.link.gen.gpucurrent, pcie.link.width.current, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown, clocks_event_reasons.sw_thermal_slowdown
+2026/07/24 06:34:13.871, P2, 1695, 7601, 102.01, 230.00, 69, 0, 0, 21030, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:34:14.878, P2, 1695, 7601, 83.35, 230.00, 68, 0, 0, 21030, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:34:15.879, P2, 1440, 7601, 232.06, 230.00, 73, 98, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:16.879, P2, 1530, 7601, 228.61, 230.00, 74, 92, 94, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:17.880, P2, 1455, 7601, 231.19, 230.00, 75, 100, 34, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:18.881, P2, 1455, 7601, 228.70, 230.00, 75, 98, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:19.882, P2, 1650, 7601, 218.16, 230.00, 74, 94, 97, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:20.882, P2, 1455, 7601, 224.15, 230.00, 75, 100, 32, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:21.883, P2, 1425, 7601, 219.13, 230.00, 75, 97, 35, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:22.884, P2, 1530, 7601, 209.23, 230.00, 75, 95, 75, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:23.885, P2, 1425, 7601, 232.19, 230.00, 76, 100, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:24.886, P2, 1665, 7601, 227.46, 230.00, 76, 93, 97, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:25.886, P2, 1425, 7601, 231.86, 230.00, 77, 100, 34, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:26.887, P2, 1425, 7601, 231.89, 230.00, 77, 100, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:27.888, P2, 1590, 7601, 207.28, 230.00, 76, 94, 96, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:28.889, P2, 1410, 7601, 225.52, 230.00, 77, 97, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:29.890, P2, 1440, 7601, 232.10, 230.00, 77, 91, 87, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:30.891, P2, 1440, 7601, 230.18, 230.00, 77, 100, 34, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:31.892, P2, 1425, 7601, 228.37, 230.00, 77, 97, 33, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:32.892, P2, 1665, 7601, 217.05, 230.00, 77, 92, 95, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:33.893, P2, 1440, 7601, 224.71, 230.00, 77, 100, 32, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:34.894, P2, 1410, 7601, 228.22, 230.00, 78, 100, 32, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:35.895, P2, 1515, 7601, 214.27, 230.00, 77, 96, 64, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:36.896, P2, 1425, 7601, 230.58, 230.00, 78, 100, 32, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:37.897, P2, 1650, 7601, 225.51, 230.00, 77, 94, 97, 21030, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:34:38.897, P2, 1635, 7601, 212.25, 230.00, 77, 93, 95, 21030, 3, 16, Active, Not Active, Not Active

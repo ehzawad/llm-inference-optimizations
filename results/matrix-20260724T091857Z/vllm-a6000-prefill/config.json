@@ -1,0 +1,7 @@
+{
+  "config": "vllm-a6000", "engine": "vllm", "shape": "prefill",
+  "precision": "bf16", "gen_tokens": 32, "per_slot_ctx": 2048,
+  "tensor_parallel": 1, "replicas": 1,
+  "gpu_telemetry_indices": "1", "np_or_max_seqs": 16,
+  "ports": "8400", "measured_per_worker": 15, "warmup_per_worker": 2
+}
