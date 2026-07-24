@@ -1,0 +1,31 @@
+{
+  "description": "Intended multi-GPU comparative matrix. Each `runs` entry is a <config>-<shape> subdirectory produced by scripts/gpu_matrix.sh. Pass this file to matrix_report.py --expect for fail-closed completeness checking. The orchestrator may run a subset; matrix_report flags any listed run that is absent.",
+  "hardware": {
+    "gpu0": "NVIDIA RTX A5000 (24 GB)",
+    "gpu1": "NVIDIA RTX A6000 (48 GB)",
+    "topology": "SYS (PCIe + cross-NUMA, NO NVLink); heterogeneous pair",
+    "pin": "CUDA_DEVICE_ORDER=PCI_BUS_ID + per-server CUDA_VISIBLE_DEVICES"
+  },
+  "shapes": {
+    "balanced": {"prompts": "prompts/short-chat.jsonl", "gen_tokens": 256, "concurrency_points": [1, 8, 16, 32, 64]},
+    "prefill":  {"prompts": "prompts/long-prompt.jsonl", "gen_tokens": 32,  "concurrency_points": [1, 4, 8, 16]},
+    "decode":   {"prompts": "prompts/short-prompt.jsonl", "gen_tokens": 512, "concurrency_points": [1, 8, 16, 32, 64]}
+  },
+  "configs": ["llamacpp-a5000", "llamacpp-a6000", "vllm-a5000", "vllm-a6000", "vllm-tp2", "vllm-dp2"],
+  "runs": [
+    "llamacpp-a5000-balanced",
+    "llamacpp-a6000-balanced",
+    "vllm-a5000-balanced",
+    "vllm-a6000-balanced",
+    "vllm-tp2-balanced",
+    "vllm-dp2-balanced",
+    "vllm-a5000-prefill",
+    "vllm-a6000-prefill",
+    "vllm-tp2-prefill",
+    "vllm-dp2-prefill",
+    "vllm-a5000-decode",
+    "vllm-a6000-decode",
+    "vllm-tp2-decode",
+    "vllm-dp2-decode"
+  ]
+}
