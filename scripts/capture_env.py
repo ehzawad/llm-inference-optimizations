@@ -11,13 +11,19 @@ Usage: capture_env.py <out_json>
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Git honours these ambient variables over --cwd, so an inherited GIT_DIR or
+# GIT_WORK_TREE would let provenance confidently record ANOTHER repository's
+# commit as the source of this run. Strip them from every git child process.
+GIT_ENV_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")
 
 
 def sh(command: str) -> str | None:
@@ -32,16 +38,33 @@ def sh(command: str) -> str | None:
         return None
 
 
-def command_output(command: Sequence[str], cwd: Path | None = None) -> str | None:
+def command_output(
+    command: Sequence[str],
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
     try:
         return subprocess.check_output(
             list(command),
             cwd=cwd,
             text=True,
             stderr=subprocess.DEVNULL,
+            env=None if env is None else dict(env),
         ).strip()
     except (subprocess.CalledProcessError, OSError):
         return None
+
+
+def git_env() -> dict[str, str]:
+    """A copy of the environment with git repository overrides removed."""
+    env = dict(os.environ)
+    for name in GIT_ENV_OVERRIDES:
+        env.pop(name, None)
+    return env
+
+
+def git_output(command: Sequence[str], cwd: Path) -> str | None:
+    return command_output(command, cwd=cwd, env=git_env())
 
 
 def pyver(module: str) -> str | None:
@@ -53,10 +76,10 @@ def pyver(module: str) -> str | None:
 
 
 def git_provenance(root: Path = ROOT) -> tuple[str | None, bool | None]:
-    commit = command_output(["git", "rev-parse", "HEAD"], cwd=root)
+    commit = git_output(["git", "rev-parse", "HEAD"], cwd=root)
     if not commit:
         return None, None
-    status = command_output(["git", "status", "--porcelain"], cwd=root)
+    status = git_output(["git", "status", "--porcelain"], cwd=root)
     if status is None:
         return commit, None
     return commit, bool(status)

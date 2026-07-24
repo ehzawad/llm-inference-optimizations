@@ -36,6 +36,7 @@
     "per_slot_ctx_tokens": 768,
     "kv_cache": "f16/f16",
     "concurrency_points": [1, 30, 100],
+    "expected_tags": ["c001", "c030", "c100"],
     "warmup_per_worker": 2,
     "measured_per_worker": 20,
     "arrival": "closed-loop, barrier-synchronized",
