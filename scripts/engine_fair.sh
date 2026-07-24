@@ -49,11 +49,17 @@ wait_health(){ # $1=pid $2=url $3=timeout
   return 1
 }
 stop_group(){
-  local pid="${1:-}" target=""
+  local pid="${1:-}" target="" pgid=""
   [ -n "$pid" ] || return 0
-  # The session leader can exit before its worker children. Test the process
-  # group directly so cleanup still reaches those surviving descendants.
-  if kill -0 -- "-$pid" 2>/dev/null; then
+  # The session leader can exit before its worker children, and under job
+  # control (`set -m`) setsid's async child is already a group leader while $!
+  # names a short-lived parent -- so $! is not necessarily the PGID. Prefer the
+  # process's real PGID; fall back to the pid (the common non-interactive
+  # setsid case, and when the leader has already exited).
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null; then
+    target="-$pgid"
+  elif kill -0 -- "-$pid" 2>/dev/null; then
     target="-$pid"
   elif kill -0 "$pid" 2>/dev/null; then
     target="$pid"
@@ -148,9 +154,14 @@ run_sglang(){
     fail=1
     return
   fi
+  # --enable-metrics: SGLang 0.5.15 defaults enable_metrics=False, so without
+  # this /metrics is absent, the server token counter is None, and the client's
+  # cross-check silently no-ops. Enable it so SGLang is cross-checked like the
+  # others (this wrapper is kept correct even though SGLang is not benchmarked).
   setsid "$sg" -m sglang.launch_server --model-path "$MERGED" --served-model-name "$ALIAS" \
     --host 127.0.0.1 --port "$PORT" --dtype bfloat16 --context-length 1024 \
     --max-running-requests 100 --disable-radix-cache --disable-cuda-graph \
+    --enable-metrics \
     > "$RUN/server-sglang.log" 2>&1 &
   local pid=$!
   active_pid="$pid"
