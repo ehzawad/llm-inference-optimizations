@@ -164,12 +164,16 @@ def get_metrics(base):
     return out
 
 
-def gpu_mem_used():
-    """GPU0 memory.used in MiB (one-shot), or None."""
+def gpu_mem_used(device="0"):
+    """memory.used in MiB (one-shot) for one physical GPU, or None.
+
+    ``device`` is the physical nvidia-smi index (independent of
+    CUDA_VISIBLE_DEVICES). Defaults to GPU 0 to preserve prior behavior.
+    """
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=memory.used",
-             "--format=csv,noheader,nounits", "-i", "0"],
+             "--format=csv,noheader,nounits", "-i", str(device)],
             text=True, stderr=subprocess.DEVNULL).strip()
         return int(out.splitlines()[0])
     except Exception:
@@ -252,16 +256,17 @@ class Telemetry:
         "clocks_event_reasons.sw_thermal_slowdown"
     )
 
-    def __init__(self, csv_path, server_pid=None):
+    def __init__(self, csv_path, server_pid=None, device="0"):
         self.csv_path = csv_path
         self.server_pid = server_pid
+        self.device = str(device)   # physical nvidia-smi index for -i
         self.proc = None
         self._cpu = []                    # (system_pct, server_proc_pct)
         self._stop = threading.Event()
         self._cpu_thread = None
 
     def start(self):
-        cmd = ["nvidia-smi", "-i", "0", f"--query-gpu={self.QUERY}",
+        cmd = ["nvidia-smi", "-i", self.device, f"--query-gpu={self.QUERY}",
                "--format=csv,nounits", "--loop-ms=1000"]
         self.fh = open(self.csv_path, "w")
         self.proc = subprocess.Popen(cmd, stdout=self.fh,

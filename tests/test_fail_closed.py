@@ -8,8 +8,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import unittest.mock
+from collections import Counter
 from pathlib import Path
 
 
@@ -375,6 +377,62 @@ class ExternalHarnessTests(unittest.TestCase):
             data = json.loads(artifact.read_text("utf-8"))
             self.assertFalse(data["ok"])
             self.assertEqual(data["error_type"], "SetupError")
+
+    def test_run_phase_round_robins_across_replicas(self) -> None:
+        # Data-parallel: a list of replica URLs must be round-robined evenly so
+        # both cards receive a balanced share of the offered load.
+        seen: list[str] = []
+
+        def record(base: str, _prompt: str, max_tokens: int = 256):
+            seen.append(base)
+            return {"ok": True, "completion_tokens": max_tokens,
+                    "ttft": 0.1, "latency": 1.0, "t_start": 0.0, "t_end": 1.0}
+
+        original = bench_external.do_request
+        bench_external.do_request = record
+        try:
+            records = bench_external.run_phase(
+                ["http://a/", "http://b/"], ["p0", "p1"],
+                concurrency=4, per_worker=4, max_tokens=128,
+            )
+        finally:
+            bench_external.do_request = original
+
+        self.assertEqual(len(records), 16)
+        counts = Counter(seen)
+        self.assertEqual(set(counts), {"http://a/", "http://b/"})
+        self.assertEqual(counts["http://a/"], counts["http://b/"])  # 8 / 8
+
+    def test_decode_rate_isolates_decode_window(self) -> None:
+        # (gen-1)/(latency-ttft): a clean decode-throughput proxy distinct from
+        # aggregate system throughput.
+        self.assertAlmostEqual(
+            bench_external.decode_rate({"completion_tokens": 256, "ttft": 0.1, "latency": 2.1}),
+            255 / 2.0,
+        )
+        self.assertIsNone(bench_external.decode_rate(
+            {"completion_tokens": 1, "ttft": 0.1, "latency": 1.0}))   # no decode window
+        self.assertIsNone(bench_external.decode_rate(
+            {"completion_tokens": 256, "ttft": None, "latency": 2.0}))  # missing ttft
+        self.assertIsNone(bench_external.decode_rate(
+            {"completion_tokens": 256, "ttft": 2.0, "latency": 2.0}))   # window <= 0
+
+    def test_aggregate_generation_delta_sums_replicas(self) -> None:
+        before = [
+            {'vllm:generation_tokens_total{model_name="m"}': 10.0},
+            {'vllm:generation_tokens_total{model_name="m"}': 100.0},
+        ]
+        after = [
+            {'vllm:generation_tokens_total{model_name="m"}': 30.0},
+            {'vllm:generation_tokens_total{model_name="m"}': 250.0},
+        ]
+        delta, name = bench_external.aggregate_generation_delta(before, after)
+        self.assertEqual(delta, 20.0 + 150.0)
+        self.assertEqual(name, "vllm:generation_tokens_total")
+
+        none_delta, none_name = bench_external.aggregate_generation_delta([{}], [{}])
+        self.assertIsNone(none_delta)
+        self.assertIsNone(none_name)
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -750,9 +808,129 @@ exit 1
             "scripts/engine_fair.sh",
             "scripts/engine_compare.sh",
             "scripts/model_serve_bench.sh",
+            "scripts/gpu_matrix.sh",
             cwd=REPO,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_gpu_matrix_dry_run_pins_gpus_per_config(self) -> None:
+        # Behavioral (no GPU): the driver's DRY_RUN plan must pin each config to
+        # the right card(s) and wire the data-parallel client to both replicas.
+        cases = {
+            "vllm-a5000": ["CUDA_VISIBLE_DEVICES=0 setsid", "--gpu-index 0", "--tensor-parallel-size 1"],
+            "vllm-a6000": ["CUDA_VISIBLE_DEVICES=1 setsid", "--gpu-index 1"],
+            "vllm-tp2": ["CUDA_VISIBLE_DEVICES=0,1 setsid", "--tensor-parallel-size 2", "--gpu-index 0,1"],
+            "vllm-dp2": ["CUDA_VISIBLE_DEVICES=0 setsid", "CUDA_VISIBLE_DEVICES=1 setsid",
+                         "--url http://127.0.0.1:8400 --url http://127.0.0.1:8401"],
+            "llamacpp-a5000": ["CUDA_VISIBLE_DEVICES=0 setsid", "llama-server", "-dev CUDA0", "--main-gpu 0"],
+            "llamacpp-a6000": ["CUDA_VISIBLE_DEVICES=1 setsid", "-dev CUDA0", "--main-gpu 0", "--gpu-index 1"],
+        }
+        env = dict(os.environ)
+        env["DRY_RUN"] = "1"
+        for config, needles in cases.items():
+            with self.subTest(config=config):
+                completed = run(
+                    "bash", "scripts/gpu_matrix.sh", config, "/tmp/matrix-dryrun", "balanced",
+                    cwd=REPO, env=env,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                out = completed.stdout
+                for needle in needles:
+                    self.assertIn(needle, out, f"{config}: missing {needle!r}")
+
+    def test_gpu_matrix_rejects_unknown_config(self) -> None:
+        env = dict(os.environ)
+        env["DRY_RUN"] = "1"
+        completed = run(
+            "bash", "scripts/gpu_matrix.sh", "vllm-a7000", "/tmp/matrix-dryrun", "balanced",
+            cwd=REPO, env=env,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+
+
+class MatrixReportTests(unittest.TestCase):
+    def write_config_run(
+        self, parent: Path, config: str, shape: str, points: list[int],
+        base_tps: float, all_ok: bool = True, measured: int = 10,
+    ) -> None:
+        run_dir = parent / f"{config}-{shape}"
+        run_dir.mkdir(parents=True)
+        tags = [f"c{c:03d}" for c in points]
+        (run_dir / "experiment.json").write_text(json.dumps({
+            "benchmark": {"concurrency_points": points, "expected_tags": tags,
+                          "measured_per_worker": measured}
+        }), encoding="utf-8")
+        (run_dir / "config.json").write_text(json.dumps({
+            "config": config, "engine": "vllm", "shape": shape, "precision": "bf16",
+        }), encoding="utf-8")
+        for c in points:
+            ok = all_ok or c != points[-1]  # fail the last point when all_ok is False
+            tokens = c * measured * 256
+            row = {
+                "engine": "vllm", "placement": config, "tag": f"c{c:03d}",
+                "concurrency": c, "measured_per_worker": measured,
+                "requests_ok": c * measured if ok else c * measured - 1,
+                "requests_failed": 0 if ok else 1,
+                "completion_tokens_total": tokens,
+                "server_generated_tokens_delta": float(tokens),
+                "server_generated_tokens_metric": "vllm:generation_tokens_total",
+                "server_counter_matches_client": True,
+                "output_tokens_per_s": base_tps * c,
+                "output_tokens_per_min": base_tps * c * 60,
+                "ttft_s": {"p50": 0.05, "p95": 0.09},
+                "latency_s": {"p50": 2.0, "p95": 2.5},
+                "decode_tokens_per_s": {"p50": base_tps * 0.9, "p95": base_tps * 0.8},
+                "telemetry": {"mem_used_mib": {"peak": 9000}, "gpu_util_pct": {"median": 85}},
+                "ok": ok,
+            }
+            (run_dir / f"benchmark-c{c:03d}.json").write_text(json.dumps(row), encoding="utf-8")
+
+    def run_matrix(self, parent: Path, *extra: str):
+        return run(sys.executable, str(SCRIPTS / "matrix_report.py"), str(parent), *extra, cwd=REPO)
+
+    def test_matrix_report_emits_tables_and_is_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            pts = [1, 8, 16]
+            self.write_config_run(parent, "vllm-a5000", "balanced", pts, 100.0)
+            self.write_config_run(parent, "vllm-a6000", "balanced", pts, 180.0)
+            self.write_config_run(parent, "vllm-dp2", "balanced", pts, 260.0)
+            self.write_config_run(parent, "vllm-tp2", "balanced", pts, 150.0, all_ok=False)
+
+            completed = self.run_matrix(parent)
+            self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+            md = (parent / "matrix-summary.md").read_text("utf-8")
+            self.assertIn("placement × concurrency", md)
+            self.assertIn("Prefill (TTFT) vs decode split", md)
+            self.assertIn("2-GPU (vLLM) vs single-card", md)
+            self.assertIn("A5000 vs A6000", md)
+            self.assertIn("`vllm-tp2`", md)  # flagged as failed
+            summary = json.loads((parent / "matrix-summary.json").read_text("utf-8"))
+            self.assertFalse(summary["matrix_ok"])
+            tp2 = next(c for c in summary["configs"] if c["config"] == "vllm-tp2")
+            self.assertFalse(tp2["ok"])
+
+    def test_matrix_report_passes_when_all_configs_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            pts = [1, 8]
+            self.write_config_run(parent, "vllm-a5000", "balanced", pts, 100.0)
+            self.write_config_run(parent, "vllm-a6000", "balanced", pts, 180.0)
+            completed = self.run_matrix(parent)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertIn("Matrix status: **PASS**", (parent / "matrix-summary.md").read_text("utf-8"))
+
+    def test_matrix_report_flags_missing_expected_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            self.write_config_run(parent, "vllm-a5000", "balanced", [1, 8], 100.0)
+            expect = parent / "matrix.json"
+            expect.write_text(json.dumps({
+                "runs": ["vllm-a5000-balanced", "vllm-a6000-balanced"]
+            }), encoding="utf-8")
+            completed = self.run_matrix(parent, "--expect", str(expect))
+            self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+            self.assertIn("vllm-a6000-balanced", (parent / "matrix-summary.md").read_text("utf-8"))
 
 
 if __name__ == "__main__":
