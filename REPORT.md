@@ -406,7 +406,7 @@ typically move TTFT and effective concurrency more than picking a faster quant.
 | **Long context / many slots, VRAM-tight** | Use **q8_0 KV cache** (~½ footprint, ~4% speed cost). | Only worth it when KV memory is the real constraint; useless at short-ctx single-stream. |
 | **Any config** | **Flash-attention ON.** | +15–21% prefill, +4–9% decode, free. |
 | **Sizing VRAM** | Budget **~3.5 GiB base + 108 MiB × slots** (768-ctx). | Linear per-slot preallocation (R²=1.00000); VRAM is never your binding limit before throughput peaks. |
-| **Choosing llama.cpp vs vLLM** | **Undecided from this data — benchmark it yourself, iso-precision.** | vLLM crashed at warmup; there is no comparison. Don't assume either way. |
+| **Choosing llama.cpp vs vLLM** | **Now measured — see §5 (iso-precision) and [`REPORT-MULTIGPU.md`](REPORT-MULTIGPU.md) (per-placement).** | llama.cpp wins single-stream; vLLM ~2.5–4× under concurrency. Precision/config-dependent — read the caveats. |
 | **Reasoning about the ceiling** | The limiter is **most consistent with host-side feed/orchestration** (not FLOPs/VRAM); exact mechanism not isolated. | GPU util median falls to ~40% while server-proc CPU rises ~11×; GPU is bursty/starved at high C. |
 
 ---

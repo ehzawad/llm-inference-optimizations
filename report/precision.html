@@ -75,7 +75,7 @@
     <div class="callout"><span class="lab">Speed vs accuracy — now measured on this rig</span>Q4_K_M's 2.18× decode win carries a <b>quality</b> cost we <a href="context.html">now measure directly</a>: a full-test wikitext perplexity sweep of exactly these five quants puts <b>Q6_K/Q8_0 practically indistinguishable from bf16</b> (≤0.014% PPL, no paired significance test) and <b>Q4_K_M at +2.42% PPL</b>. That is general-domain likelihood, <b>not legal-task accuracy</b> — and cross-scheme rankings stay literature (AWQ often matches/beats GPTQ per its paper, ~1.45× kernel speedup). <b>Validate quality on your task before dropping bits.</b> See <a href="context.html">Context &amp; accuracy</a> for the numbers, <a href="engines.html">Engines</a> for the FP8/AWQ engine angle.</div>
   </section>
 
-  <div class="col foot">Raw data: <code>results/precision-20260720T191131Z/</code>.<br><a href="https://github.com/ehzawad/qwen3-lora-gguf-bench">github.com/ehzawad/qwen3-lora-gguf-bench</a></div>
+  <div class="col foot">Raw data: <code>results/precision-20260720T191131Z/</code>.<br><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></div>
 </main>
 
 <script>

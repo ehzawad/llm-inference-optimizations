@@ -321,7 +321,7 @@
         <tr><td>Higher-precision candidate</td><td>Q6_K or Q8_0 (default Q6_K) — validate quality on your task</td><td>prefill flat, so higher bits cost little there; Q6_K/Q8_0 ≈ bf16 on <a href="context.html">wikitext PPL</a> (≤0.014%, not legal-task quality)</td></tr>
         <tr><td>Any config</td><td>Flash-attention ON</td><td>+15–21% prefill, free</td></tr>
         <tr><td>Sizing VRAM</td><td>~3.5 GiB + 108 MiB × slots</td><td>linear preallocation (R²=1.0); never the binding limit</td></tr>
-        <tr><td>llama.cpp vs vLLM</td><td>Benchmark it yourself, iso-precision</td><td>vLLM crashed here — no comparison exists</td></tr>
+        <tr><td>llama.cpp vs vLLM</td><td>Measured — see §5 + the multi-GPU report</td><td>llama.cpp wins single-stream; vLLM ~2.5–4× under concurrency</td></tr>
       </tbody>
     </table></div>
   </section>
@@ -343,7 +343,7 @@
   <div class="col foot">
     <hr class="soft">
     <p>Reproducible pipeline and the result JSON/CSV are in the repository (raw per-slot server logs are gitignored; the derived evidence that depends on them is committed). Three independent adversarial review passes and a 5-agent analysis workflow informed this guide; flagged overclaims were corrected against the raw data.</p>
-    <p><a href="https://github.com/ehzawad/qwen3-lora-gguf-bench">github.com/ehzawad/qwen3-lora-gguf-bench</a></p>
+    <p><a href="https://github.com/ehzawad/llm-inference-optimizations">github.com/ehzawad/llm-inference-optimizations</a></p>
   </div>
 </main>
 

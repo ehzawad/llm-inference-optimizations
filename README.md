@@ -1,4 +1,4 @@
-# qwen3-lora-gguf-bench
+# llm-inference-optimizations
 
 Reproducible pipeline that takes an official **Qwen3-4B** model plus a public
 **LoRA adapter**, merges them, converts to **GGUF**, quantizes to **Q6_K**, serves
@@ -29,8 +29,12 @@ load), reconciled through three independent review passes — lives in:
 - **In scope:** an end-to-end, pinned, verifiable path from `base + adapter` to a
   6-bit GGUF served under real concurrency, with honest throughput/bottleneck
   measurement on one 24 GB Ampere card.
-- **Non-goals:** production serving advice, cross-GPU generalization, adapter
-  quality claims, or a vLLM/TGI comparison. This is a single-card llama.cpp study.
+- **Non-goals (of this single-card pipeline):** production serving advice or
+  adapter quality claims.
+- **Companion study:** [`REPORT-MULTIGPU.md`](REPORT-MULTIGPU.md) extends the work to
+  **A5000 vs A6000 vs 2-GPU tensor-parallel vs data-parallel**, across **vLLM and
+  llama.cpp** — the cross-GPU and engine comparisons this single-card pipeline
+  originally left out. (Single-A5000 field guide: [`REPORT.md`](REPORT.md).)
 
 ## Inputs, revisions, licenses
 
