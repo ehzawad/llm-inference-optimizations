@@ -96,10 +96,14 @@ def read_llama_commit(root: Path = ROOT) -> str | None:
 
 def build_manifest(root: Path = ROOT) -> dict[str, object]:
     source_commit, source_dirty = git_provenance(root)
+    # Query ALL GPUs, one line each. On a multi-GPU box a placement can pin GPU1
+    # (A6000) or both cards, so a hardcoded `-i 0` would mislabel the manifest as
+    # the A5000. The client telemetry already records which physical index each
+    # run used.
     gpu = sh(
-        "nvidia-smi --query-gpu=name,uuid,memory.total,power.limit,"
+        "nvidia-smi --query-gpu=index,name,uuid,memory.total,power.limit,"
         "driver_version,pcie.link.gen.max,pcie.link.width.max "
-        "--format=csv,noheader,nounits -i 0"
+        "--format=csv,noheader,nounits"
     )
 
     return {

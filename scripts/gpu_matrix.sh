@@ -28,6 +28,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 # device 0 == physical A5000, device 1 == physical A6000 (matches nvidia-smi -i).
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
+# Don't let an inherited value silently change llama.cpp VRAM-spill behavior
+# (unmeasured in the manifest); keep all runs on a known-default memory policy.
+unset GGML_CUDA_ENABLE_UNIFIED_MEMORY
 
 CONFIG="${1:?usage: gpu_matrix.sh <config> <parent_run_dir> [shape]}"
 PARENT="${2:?usage: gpu_matrix.sh <config> <parent_run_dir> [shape]}"
