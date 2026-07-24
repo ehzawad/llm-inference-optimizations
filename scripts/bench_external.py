@@ -133,8 +133,9 @@ def run_phase(
     """Run a barrier-synchronized closed-loop phase.
 
     ``base`` may be a single URL or a list of replica URLs; requests are
-    round-robined across replicas so a data-parallel deployment is offered a
-    balanced share of load under one wall clock. Worker exceptions are converted
+    dispatched join-shortest-queue across replicas (each to the replica with the
+    fewest in-flight requests) so a heterogeneous data-parallel deployment lets
+    the faster card pull more load, measured under one wall clock. Worker exceptions are converted
     into failed request records instead of being lost on background threads, so
     the returned list contains exactly ``concurrency * per_worker`` records
     unless thread creation itself fails.
@@ -350,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--url", required=True, action="append",
-        help="server base URL; repeat for data-parallel replicas (round-robined)",
+        help="server base URL; repeat for data-parallel replicas (load-balanced, join-shortest-queue)",
     )
     parser.add_argument("--engine", default="unknown")
     parser.add_argument(
@@ -487,11 +488,18 @@ def main(argv: list[str] | None = None) -> int:
             for idx, telemetry in zip(gpu_indices, telemetries)
         }
         # Representative telemetry for the single-column report: the busiest card
-        # by peak VRAM (falls back to the first GPU when peaks are unavailable).
+        # by GPU-utilization median (peak VRAM is a poor proxy on heterogeneous
+        # cards -- an idle A6000 reserves ~2x the A5000's VRAM, so a VRAM-based
+        # pick would falsely report the idle card). Two-GPU (TP/DP) analysis must
+        # use telemetry_by_gpu; this scalar is only a convenience for single-card
+        # rows.
+        def _util_median(summary: Any) -> float:
+            util = summary.get("gpu_util_pct") if isinstance(summary, dict) else None
+            med = util.get("median") if isinstance(util, dict) else None
+            return float(med) if isinstance(med, (int, float)) and not isinstance(med, bool) else -1.0
+
         primary = max(
-            telemetry_by_gpu.values(),
-            key=lambda summary: _telemetry_peak_vram(summary) or -1.0,
-            default={},
+            telemetry_by_gpu.values(), key=_util_median, default={},
         ) if telemetry_by_gpu else {}
 
         result.update({
