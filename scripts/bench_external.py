@@ -124,27 +124,32 @@ def failed_request(exc: BaseException) -> dict[str, Any]:
 
 
 def run_phase(
-    base: str,
+    base: str | list[str],
     prompts: list[str],
     concurrency: int,
     per_worker: int,
+    max_tokens: int = 256,
 ) -> list[dict[str, Any]]:
     """Run a barrier-synchronized closed-loop phase.
 
-    Worker exceptions are converted into failed request records instead of being
-    lost on background threads. The returned list therefore contains exactly
-    ``concurrency * per_worker`` records unless thread creation itself fails.
+    ``base`` may be a single URL or a list of replica URLs; requests are
+    round-robined across replicas so a data-parallel deployment is offered a
+    balanced share of load under one wall clock. Worker exceptions are converted
+    into failed request records instead of being lost on background threads, so
+    the returned list contains exactly ``concurrency * per_worker`` records
+    unless thread creation itself fails.
     """
+    bases = [base] if isinstance(base, str) else list(base)
     counter = {"i": 0}
     counter_lock = threading.Lock()
     sink: list[dict[str, Any]] = []
     barrier = threading.Barrier(concurrency)
 
-    def next_prompt() -> str:
+    def next_index() -> int:
         with counter_lock:
             i = counter["i"]
             counter["i"] += 1
-        return prompts[i % len(prompts)]
+        return i
 
     def worker() -> None:
         try:
@@ -153,8 +158,11 @@ def run_phase(
             sink.extend(failed_request(exc) for _ in range(per_worker))
             return
         for _ in range(per_worker):
+            i = next_index()
+            target = bases[i % len(bases)]
+            prompt = prompts[i % len(prompts)]
             try:
-                result = do_request(base, next_prompt())
+                result = do_request(target, prompt, max_tokens)
             except Exception as exc:  # keep thread failures visible in the artifact
                 result = failed_request(exc)
             sink.append(result)
@@ -208,6 +216,52 @@ def generation_counter_delta(
     return None, None
 
 
+def aggregate_generation_delta(
+    befores: list[dict[str, float]],
+    afters: list[dict[str, float]],
+) -> tuple[float | None, str | None]:
+    """Sum the generation-counter delta across one or more replica scrapes.
+
+    For a single server this is just ``generation_counter_delta``. For a
+    data-parallel deployment (one scrape per replica) the per-replica deltas are
+    summed so the server-side token count still cross-checks the client total.
+    Returns ``(None, None)`` only when NO replica exposed a usable counter.
+    """
+    total = 0.0
+    names: list[str] = []
+    found = False
+    for before, after in zip(befores, afters):
+        delta, name = generation_counter_delta(before, after)
+        if delta is not None:
+            total += delta
+            found = True
+            if name and name not in names:
+                names.append(name)
+    if not found:
+        return None, None
+    return total, "+".join(names)
+
+
+def decode_rate(record: dict[str, Any]) -> float | None:
+    """Per-request steady-state decode rate: (gen_tokens-1)/(latency-ttft).
+
+    Isolates the decode phase from prefill by subtracting TTFT and the first
+    token, so it is a clean decode-throughput proxy distinct from the aggregate
+    system throughput (tokens/makespan). Returns None when it cannot be formed.
+    """
+    tokens = record.get("completion_tokens")
+    ttft = record.get("ttft")
+    latency = record.get("latency")
+    if not isinstance(tokens, (int, float)) or tokens is None or tokens <= 1:
+        return None
+    if ttft is None or latency is None:
+        return None
+    decode_window = latency - ttft
+    if decode_window <= 0:
+        return None
+    return (tokens - 1) / decode_window
+
+
 def counter_matches(client_tokens: int, server_tokens: float | None) -> bool | None:
     if server_tokens is None:
         return None
@@ -253,16 +307,45 @@ def load_prompts(path: Path) -> list[str]:
     return prompts
 
 
+def _telemetry_peak_vram(summary: dict[str, Any] | None) -> float | None:
+    mem = (summary or {}).get("mem_used_mib")
+    return mem.get("peak") if isinstance(mem, dict) else None
+
+
+def percentiles(values: list[float]) -> dict[str, float | None]:
+    return {
+        "p50": percentile(values, 0.5),
+        "p90": percentile(values, 0.9),
+        "p95": percentile(values, 0.95),
+        "p99": percentile(values, 0.99),
+        "max": max(values) if values else None,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--url", required=True)
+    parser.add_argument(
+        "--url", required=True, action="append",
+        help="server base URL; repeat for data-parallel replicas (round-robined)",
+    )
     parser.add_argument("--engine", default="unknown")
+    parser.add_argument(
+        "--placement", default=None,
+        help="matrix placement label recorded in the artifact (e.g. vllm-dp2)",
+    )
     parser.add_argument("--concurrency", type=int, required=True)
     parser.add_argument("--outdir", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--prompts", default="prompts/short-chat.jsonl")
     parser.add_argument("--measured", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--gen-tokens", type=int, default=256,
+                        help="generated tokens per request (ignore_eos), for shape control")
+    parser.add_argument(
+        "--gpu-index", default="0",
+        help="comma-separated PHYSICAL nvidia-smi GPU indices to telemeter "
+             "(e.g. '0', '1', or '0,1' for two-GPU placements)",
+    )
     args = parser.parse_args(argv)
 
     if args.concurrency <= 0:
@@ -271,8 +354,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--measured must be positive")
     if args.warmup < 0:
         parser.error("--warmup must be non-negative")
+    if args.gen_tokens <= 0:
+        parser.error("--gen-tokens must be positive")
 
-    base = args.url.rstrip("/") + "/"
+    urls = [u.rstrip("/") + "/" for u in args.url]
+    gpu_indices = [tok.strip() for tok in args.gpu_index.split(",") if tok.strip()]
+    if not gpu_indices:
+        gpu_indices = ["0"]
+
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     result_path = outdir / f"benchmark-{args.tag}.json"
@@ -280,10 +369,14 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any] = {
         "bench_version": BENCH_VERSION,
         "engine": args.engine,
+        "placement": args.placement,
         "tag": args.tag,
+        "urls": urls,
+        "gpu_indices": gpu_indices,
         "concurrency": args.concurrency,
         "warmup_per_worker": args.warmup,
         "measured_per_worker": args.measured,
+        "gen_tokens": args.gen_tokens,
         "requests_expected": expected_measured,
         "ok": False,
     }
@@ -299,13 +392,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[ext] wrote failure artifact {result_path}", file=sys.stderr)
         return 2
 
-    telemetry = Telemetry(str(outdir / f"telemetry-{args.tag}.csv"))
+    # One telemetry sampler per involved physical GPU (both cards for tp2/dp2).
+    telemetries = [
+        Telemetry(str(outdir / f"telemetry-{args.tag}-gpu{idx}.csv"), device=idx)
+        for idx in gpu_indices
+    ]
     telemetry_started = False
     try:
-        wait_ready(base)
-        vram_ready = gpu_mem_used()
+        for base in urls:
+            wait_ready(base)
+        vram_ready = {idx: gpu_mem_used(idx) for idx in gpu_indices}
 
-        warmup = run_phase(base, prompts, args.concurrency, args.warmup)
+        warmup = run_phase(urls, prompts, args.concurrency, args.warmup, args.gen_tokens)
         expected_warmup = args.concurrency * args.warmup
         warmup_bad = [record for record in warmup if not record.get("ok")]
         if len(warmup) != expected_warmup or warmup_bad:
@@ -315,23 +413,26 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         time.sleep(2)
-        vram_idle = gpu_mem_used()
-        metrics_before = get_metrics(base)
+        vram_idle = {idx: gpu_mem_used(idx) for idx in gpu_indices}
+        metrics_before = [get_metrics(base) for base in urls]
         try:
-            telemetry.start()
+            for telemetry in telemetries:
+                telemetry.start()
             telemetry_started = True
         except Exception:
-            telemetry.stop()
+            for telemetry in telemetries:
+                telemetry.stop()
             raise
         try:
             time.sleep(1)
-            sink = run_phase(base, prompts, args.concurrency, args.measured)
+            sink = run_phase(urls, prompts, args.concurrency, args.measured, args.gen_tokens)
             time.sleep(1)
         finally:
             if telemetry_started:
-                telemetry.stop()
+                for telemetry in telemetries:
+                    telemetry.stop()
                 telemetry_started = False
-        metrics_after = get_metrics(base)
+        metrics_after = [get_metrics(base) for base in urls]
 
         ok_records = [record for record in sink if record.get("ok")]
         bad_records = [record for record in sink if not record.get("ok")]
@@ -345,14 +446,29 @@ def main(argv: list[str] | None = None) -> int:
         output_tps = completion_tokens / makespan if makespan else 0.0
         ttfts = [record["ttft"] for record in ok_records if record["ttft"] is not None]
         latencies = [record["latency"] for record in ok_records]
+        decode_rates = [
+            rate for rate in (decode_rate(record) for record in ok_records) if rate is not None
+        ]
 
-        server_generated, server_metric = generation_counter_delta(
+        server_generated, server_metric = aggregate_generation_delta(
             metrics_before, metrics_after
         )
         counters_match = counter_matches(completion_tokens, server_generated)
         run_ok = successful_run(
             len(ok_records), len(bad_records), expected_measured, counters_match
         )
+
+        telemetry_by_gpu = {
+            f"gpu{idx}": telemetry.summarize()
+            for idx, telemetry in zip(gpu_indices, telemetries)
+        }
+        # Representative telemetry for the single-column report: the busiest card
+        # by peak VRAM (falls back to the first GPU when peaks are unavailable).
+        primary = max(
+            telemetry_by_gpu.values(),
+            key=lambda summary: _telemetry_peak_vram(summary) or -1.0,
+            default={},
+        ) if telemetry_by_gpu else {}
 
         result.update({
             "ok": run_ok,
@@ -366,28 +482,19 @@ def main(argv: list[str] | None = None) -> int:
             "server_generated_tokens_metric": server_metric,
             "server_counter_matches_client": counters_match,
             "prompt_tokens_example": ok_records[0]["prompt_tokens"] if ok_records else None,
-            "ttft_s": {
-                "p50": percentile(ttfts, 0.5),
-                "p90": percentile(ttfts, 0.9),
-                "p95": percentile(ttfts, 0.95),
-                "p99": percentile(ttfts, 0.99),
-                "max": max(ttfts) if ttfts else None,
-            },
-            "latency_s": {
-                "p50": percentile(latencies, 0.5),
-                "p90": percentile(latencies, 0.9),
-                "p95": percentile(latencies, 0.95),
-                "p99": percentile(latencies, 0.99),
-                "max": max(latencies) if latencies else None,
-            },
+            "ttft_s": percentiles(ttfts),
+            "latency_s": percentiles(latencies),
+            "decode_tokens_per_s": percentiles(decode_rates),
             "vram_ready_mib": vram_ready,
             "vram_idle_mib": vram_idle,
-            "telemetry": telemetry.summarize(),
+            "telemetry": primary,
+            "telemetry_by_gpu": telemetry_by_gpu,
             "failures_sample": bad_records[:5],
         })
     except Exception as exc:
         if telemetry_started:
-            telemetry.stop()
+            for telemetry in telemetries:
+                telemetry.stop()
         result.update({
             "ok": False,
             "error_type": type(exc).__name__,
@@ -400,9 +507,10 @@ def main(argv: list[str] | None = None) -> int:
 
     write_result(result_path, result)
     print(
-        f"[ext] {args.engine} C={args.concurrency}: "
+        f"[ext] {args.engine} [{args.placement or 'single'}] C={args.concurrency}: "
         f"{result['output_tokens_per_min']:.0f} tok/min "
         f"({result['output_tokens_per_s']:.1f} tok/s) "
+        f"decode_p50={result['decode_tokens_per_s']['p50']} "
         f"ok={result['requests_ok']} fail={result['requests_failed']} "
         f"ttft_p50={result['ttft_s']['p50']}"
     )
