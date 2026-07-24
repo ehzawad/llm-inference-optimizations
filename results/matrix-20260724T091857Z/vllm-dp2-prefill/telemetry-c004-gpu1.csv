@@ -1,0 +1,16 @@
+timestamp, pstate, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw.instant [W], power.limit [W], temperature.gpu, utilization.gpu [%], utilization.memory [%], memory.used [MiB], pcie.link.gen.gpucurrent, pcie.link.width.current, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown, clocks_event_reasons.sw_thermal_slowdown
+2026/07/24 06:33:27.707, P2, 1800, 7601, 83.23, 300.00, 65, 4, 0, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:28.712, P2, 1800, 7601, 83.30, 300.00, 65, 4, 0, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:29.712, P2, 1680, 7601, 242.41, 300.00, 70, 68, 41, 42114, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:33:30.713, P2, 1890, 7601, 301.45, 300.00, 70, 100, 44, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:31.714, P2, 1890, 7601, 256.21, 300.00, 71, 97, 88, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:32.716, P2, 1875, 7601, 255.24, 300.00, 71, 96, 88, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:33.716, P2, 1680, 7601, 236.96, 300.00, 72, 67, 48, 42114, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:33:34.717, P2, 1860, 7601, 304.66, 300.00, 73, 100, 44, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:35.718, P2, 1875, 7601, 255.26, 300.00, 73, 96, 88, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:36.719, P2, 1875, 7601, 255.85, 300.00, 73, 98, 88, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:37.720, P2, 1620, 7601, 292.36, 300.00, 74, 64, 36, 42114, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:33:38.721, P2, 1875, 7601, 256.94, 300.00, 74, 99, 70, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:39.722, P2, 1875, 7601, 257.85, 300.00, 75, 96, 87, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:40.723, P2, 1875, 7601, 215.44, 300.00, 75, 97, 88, 42114, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:33:41.724, P2, 1875, 7601, 102.08, 300.00, 71, 4, 0, 42114, 3, 16, Not Active, Not Active, Not Active

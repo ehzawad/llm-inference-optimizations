@@ -1,0 +1,19 @@
+timestamp, pstate, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw.instant [W], power.limit [W], temperature.gpu, utilization.gpu [%], utilization.memory [%], memory.used [MiB], pcie.link.gen.gpucurrent, pcie.link.width.current, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown, clocks_event_reasons.sw_thermal_slowdown
+2026/07/24 06:30:24.200, P2, 1800, 7601, 85.30, 300.00, 68, 4, 0, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:25.211, P2, 1800, 7601, 84.73, 300.00, 68, 4, 0, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:26.212, P2, 1875, 7601, 228.68, 300.00, 71, 95, 69, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:27.214, P2, 1875, 7601, 201.22, 300.00, 72, 81, 40, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:28.214, P2, 1875, 7601, 203.25, 300.00, 72, 93, 19, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:29.215, P2, 1875, 7601, 219.03, 300.00, 73, 100, 20, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:30.216, P2, 1875, 7601, 216.90, 300.00, 73, 98, 20, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:31.217, P2, 1875, 7601, 215.70, 300.00, 74, 98, 19, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:32.218, P2, 1875, 7601, 226.62, 300.00, 74, 98, 20, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:33.219, P2, 1875, 7601, 229.68, 300.00, 75, 98, 21, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:34.220, P2, 1875, 7601, 234.19, 300.00, 75, 100, 21, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:35.220, P2, 1875, 7601, 235.95, 300.00, 75, 100, 21, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:36.221, P2, 1875, 7601, 236.38, 300.00, 76, 100, 20, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:37.222, P2, 1875, 7601, 236.16, 300.00, 76, 100, 21, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:38.223, P2, 1875, 7601, 238.93, 300.00, 76, 100, 21, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:39.223, P2, 1860, 7601, 233.36, 300.00, 76, 100, 20, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:40.224, P2, 1860, 7601, 97.29, 300.00, 73, 4, 0, 42322, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:30:41.225, P2, 1860, 7601, 97.07, 300.00, 73, 4, 0, 42322, 3, 16, Not Active, Not Active, Not Active

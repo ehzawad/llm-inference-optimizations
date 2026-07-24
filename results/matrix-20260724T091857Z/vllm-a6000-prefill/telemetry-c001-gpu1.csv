@@ -1,0 +1,12 @@
+timestamp, pstate, clocks.current.sm [MHz], clocks.current.memory [MHz], power.draw.instant [W], power.limit [W], temperature.gpu, utilization.gpu [%], utilization.memory [%], memory.used [MiB], pcie.link.gen.gpucurrent, pcie.link.width.current, clocks_event_reasons.sw_power_cap, clocks_event_reasons.hw_thermal_slowdown, clocks_event_reasons.sw_thermal_slowdown
+2026/07/24 06:26:39.725, P2, 1800, 7601, 89.04, 300.00, 63, 0, 0, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:40.730, P2, 1800, 7601, 82.20, 300.00, 63, 0, 0, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:41.731, P2, 1890, 7601, 281.25, 300.00, 69, 94, 98, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:42.732, P2, 1605, 7601, 318.59, 300.00, 69, 96, 46, 42116, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:26:43.733, P2, 1890, 7601, 283.72, 300.00, 70, 94, 98, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:44.734, P2, 1890, 7601, 283.94, 300.00, 70, 94, 98, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:45.735, P2, 1605, 7601, 317.92, 300.00, 71, 95, 46, 42116, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:26:46.736, P2, 1875, 7601, 283.94, 300.00, 72, 94, 98, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:47.737, P2, 1875, 7601, 282.93, 300.00, 72, 95, 98, 42116, 3, 16, Not Active, Not Active, Not Active
+2026/07/24 06:26:48.738, P2, 1590, 7601, 312.58, 300.00, 73, 91, 43, 42116, 3, 16, Active, Not Active, Not Active
+2026/07/24 06:26:49.740, P2, 1875, 7601, 285.05, 300.00, 74, 94, 97, 42116, 3, 16, Not Active, Not Active, Not Active

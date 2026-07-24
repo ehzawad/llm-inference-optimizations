@@ -1,0 +1,199 @@
+{
+  "bench_version": "1.2",
+  "engine": "vllm",
+  "placement": "vllm-tp2",
+  "tag": "c004",
+  "urls": [
+    "http://127.0.0.1:8400/"
+  ],
+  "gpu_indices": [
+    "0",
+    "1"
+  ],
+  "concurrency": 4,
+  "warmup_per_worker": 2,
+  "measured_per_worker": 15,
+  "gen_tokens": 32,
+  "requests_expected": 60,
+  "ok": true,
+  "requests_ok": 60,
+  "requests_failed": 0,
+  "completion_tokens_total": 1920,
+  "makespan_s": 14.550739001948386,
+  "output_tokens_per_s": 131.95206097387262,
+  "output_tokens_per_min": 7917.123658432357,
+  "server_generated_tokens_delta": 1920.0,
+  "server_generated_tokens_metric": "vllm:generation_tokens_total",
+  "server_counter_matches_client": true,
+  "prompt_tokens_example": 1249,
+  "ttft_s": {
+    "p50": 0.5842087799683213,
+    "p90": 0.625227021984756,
+    "p95": 0.6289050959749147,
+    "p99": 0.6620198170421645,
+    "max": 0.6620198170421645
+  },
+  "latency_s": {
+    "p50": 0.9782477479893714,
+    "p90": 0.9848600520053878,
+    "p95": 1.0187646199483424,
+    "p99": 1.0202739899978042,
+    "max": 1.0202739899978042
+  },
+  "decode_tokens_per_s": {
+    "p50": 85.60606101853799,
+    "p90": 87.41133898820101,
+    "p95": 87.58763251527682,
+    "p99": 88.57976898660765,
+    "max": 88.57976898660765
+  },
+  "vram_ready_mib": {
+    "0": 21046,
+    "1": 42282
+  },
+  "vram_idle_mib": {
+    "0": 21086,
+    "1": 42322
+  },
+  "telemetry": {
+    "gpu_util_pct": {
+      "median": 98.0,
+      "p95": 100.0,
+      "peak": 100.0,
+      "min": 4.0,
+      "samples": 18
+    },
+    "mem_controller_util_pct_proxy": {
+      "median": 20.0,
+      "p95": 69.0,
+      "peak": 69.0,
+      "min": 0.0,
+      "samples": 18
+    },
+    "power_w": {
+      "median": 222.825,
+      "p95": 238.93,
+      "peak": 238.93,
+      "min": 84.73,
+      "samples": 18
+    },
+    "sm_clock_mhz": {
+      "median": 1875.0,
+      "p95": 1875.0,
+      "peak": 1875.0,
+      "min": 1800.0,
+      "samples": 18
+    },
+    "mem_used_mib": {
+      "median": 42322.0,
+      "p95": 42322.0,
+      "peak": 42322.0,
+      "min": 42322.0,
+      "samples": 18
+    },
+    "temperature_c": {
+      "median": 73.5,
+      "p95": 76.0,
+      "peak": 76.0,
+      "min": 68.0,
+      "samples": 18
+    },
+    "cpu_system_pct": null,
+    "cpu_server_proc_pct": null
+  },
+  "telemetry_by_gpu": {
+    "gpu0": {
+      "gpu_util_pct": {
+        "median": 91.0,
+        "p95": 100.0,
+        "peak": 100.0,
+        "min": 0.0,
+        "samples": 17
+      },
+      "mem_controller_util_pct_proxy": {
+        "median": 19.0,
+        "p95": 68.0,
+        "peak": 68.0,
+        "min": 0.0,
+        "samples": 17
+      },
+      "power_w": {
+        "median": 201.99,
+        "p95": 220.62,
+        "peak": 220.62,
+        "min": 71.53,
+        "samples": 17
+      },
+      "sm_clock_mhz": {
+        "median": 1860.0,
+        "p95": 1905.0,
+        "peak": 1905.0,
+        "min": 1695.0,
+        "samples": 17
+      },
+      "mem_used_mib": {
+        "median": 21086.0,
+        "p95": 21086.0,
+        "peak": 21086.0,
+        "min": 21086.0,
+        "samples": 17
+      },
+      "temperature_c": {
+        "median": 63.0,
+        "p95": 66.0,
+        "peak": 66.0,
+        "min": 55.0,
+        "samples": 17
+      },
+      "cpu_system_pct": null,
+      "cpu_server_proc_pct": null
+    },
+    "gpu1": {
+      "gpu_util_pct": {
+        "median": 98.0,
+        "p95": 100.0,
+        "peak": 100.0,
+        "min": 4.0,
+        "samples": 18
+      },
+      "mem_controller_util_pct_proxy": {
+        "median": 20.0,
+        "p95": 69.0,
+        "peak": 69.0,
+        "min": 0.0,
+        "samples": 18
+      },
+      "power_w": {
+        "median": 222.825,
+        "p95": 238.93,
+        "peak": 238.93,
+        "min": 84.73,
+        "samples": 18
+      },
+      "sm_clock_mhz": {
+        "median": 1875.0,
+        "p95": 1875.0,
+        "peak": 1875.0,
+        "min": 1800.0,
+        "samples": 18
+      },
+      "mem_used_mib": {
+        "median": 42322.0,
+        "p95": 42322.0,
+        "peak": 42322.0,
+        "min": 42322.0,
+        "samples": 18
+      },
+      "temperature_c": {
+        "median": 73.5,
+        "p95": 76.0,
+        "peak": 76.0,
+        "min": 68.0,
+        "samples": 18
+      },
+      "cpu_system_pct": null,
+      "cpu_server_proc_pct": null
+    }
+  },
+  "failures_sample": []
+}

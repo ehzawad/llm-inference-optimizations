@@ -1,0 +1,7 @@
+{
+  "benchmark": {
+    "concurrency_points": [1, 8, 16, 32, 64],
+    "expected_tags": ["c001", "c008", "c016", "c032", "c064"],
+    "measured_per_worker": 15
+  }
+}
