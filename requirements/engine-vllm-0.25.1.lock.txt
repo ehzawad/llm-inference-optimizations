@@ -188,13 +188,13 @@ tokenizers==0.22.2
 tokenspeed-mla==0.1.2
 tokenspeed-triton==3.8.10.post20260709
 tomli==2.4.1
-torch==2.11.0
+torch==2.13.0
 torch_c_dlpack_ext==0.1.5
 torchaudio==2.11.0
 torchcodec==0.15.0
 torchvision==0.26.0
 tqdm==4.69.0
-transformers==5.14.1
+transformers==5.5.0
 triton==3.6.0
 typer==0.27.0
 typing-inspection==0.4.2
